@@ -20,7 +20,7 @@ ENV_DIAGNOSTIC_NOTE = '（引擎环境诊断：本次运行环境读取 Windows 
 #: 共用一个列表会去找一个并不存在的 scenes/WaveTuning.tscn。
 SCENE_NAMES = ('Main', 'Player', 'PlayerBullet', 'Enemy', 'EnemyBullet', 'Explosion', 'Boss', 'HUD')
 SCRIPT_NAMES = ('Main', 'Player', 'PlayerBullet', 'Enemy', 'EnemyBullet', 'Explosion', 'Boss', 'HUD', 'WaveTuning')
-TEST_NAMES = ('SmokeTest', 'StressTest', 'VisualTest', 'ThreatTest')
+TEST_NAMES = ('SmokeTest', 'StressTest', 'VisualTest', 'ThreatTest', 'SoakTest')
 #: 项目根目录下必须一起打包的文本资源。default_bus_layout.tres 漏掉的话，
 #: 解压出来的项目里没有 Music/SFX 总线，代码里的 bus="Music" 会静默回落到 Master。
 ROOT_FILES = ('project.godot', 'default_bus_layout.tres')
@@ -132,7 +132,7 @@ require_clean(smoke, 'smoke')
 # 断言项数量会随测试增长。写死会让文档在改测试后说谎，因此从日志的实际结果读取。
 passed, total, _ = smoke_totals(smoke)
 feature_badge = f'<span>{passed} / {total} 自动检查通过</span>'
-for kind in ('import', 'launch', 'visual', 'stress', 'threat'):
+for kind in ('import', 'launch', 'visual', 'stress', 'threat', 'soak'):
     require_clean((OUT / f'{kind}-results.txt').read_text(encoding='utf-8'), kind)
 # 压力基准的结论要进文档，所以这里把它量出来的关键数字读出来核对一遍。
 stress_log = (OUT / 'stress-results.txt').read_text(encoding='utf-8')
@@ -146,6 +146,14 @@ threat_lines = re.findall(
     (OUT / 'threat-results.txt').read_text(encoding='utf-8'))
 assert threat_lines, '威胁基准日志里找不到 THREAT 汇总行'
 threat_level, threat_shots_per_enemy, threat_pass_rate, threat_arrivals = threat_lines[-1]
+# 浸泡基准：长时局有没有随时间退化。压力基准只测 6 秒，证明不了这一点。
+soak_match = re.search(
+    r'SOAK: 时长=(\d+)s 前半帧=([\d.]+)ms 后半帧=([\d.]+)ms 早期实体峰值=(\d+) 后期实体峰值=(\d+) '
+    r'.*?残留Actors=(\d+) 对象净增=(\d+)',
+    (OUT / 'soak-results.txt').read_text(encoding='utf-8'))
+assert soak_match, '浸泡基准日志里找不到 SOAK 汇总行'
+soak_seconds, soak_first_frame, soak_second_frame, soak_early_peak, soak_late_peak, \
+    soak_residual, soak_object_growth = soak_match.groups()
 
 summary = f'''- 实际引擎：`4.7.2.stable.official.ed1daf0bf`（Windows x86_64 Standard 官方发行包）。
 - 引擎下载包 SHA-256 已与官方发行 API 的摘要核对一致；引擎二进制不打包进源码交付物。
@@ -175,6 +183,10 @@ summary = f'''- 实际引擎：`4.7.2.stable.official.ed1daf0bf`（Windows x86_6
 - 齐射的回归断言覆盖三件事：发数阶梯与封顶（难度 1/10 为 1 发、11 起 2 发、21 起 3 发、再高也不涨）、一次齐射真的生成 3 颗敌弹且中间一发保持基准方向、左右两发相对基准方向严格对称；另有一条对照，确认**单发敌机的弹道与旧行为逐值一致**（偏移恰好为 0），避免齐射悄悄改掉所有敌人的既有弹道。
 - 随后按真人反馈又做了两处**规则与手感**修正，都朝“让威胁真的存在”的方向：① **拦截弹改为一发换一发**——早先击落敌弹后自身继续飞，还被当成优点写进文档；满配时它等于一面无限次拦截的盾。**这里要如实说明**：实测这条对敌弹通过率几乎没有影响（73.5% → 73.9%），因为玩家每秒 148 发对约 20 发敌弹，弹幕怎么都能扫到——它去掉的是免费优势，不是补上威胁。② **玩家子弹出屏即失效**：`play_area_top`（默认 90，取顶部信息栏下沿）成为有效范围上界。这一条修的是一个具体的手感问题——敌机在 y=-48 出生，而顶部色块盖住 0~90，子弹原本一直有效到 y=-48，于是**能在玩家看不见的地方把敌机打死**，表现为“敌人刚露头就没了”；边界取 90 而不是 0，正因为那 90 像素同样被色块挡着。实测这一条把难度 10 处的“每架敌机开火数”从 0.38 抬到 **1.06 发**（+179%）：敌机终于活到了能还手的时候。两处修正的断言都是**成对**写的，防止“只修好一半”——拦截弹一边断言敌弹被击落、一边断言自身也被消耗；出屏失效一边断言栏下的敌机打不到、一边断言露头之后照常打得死。
 - 随后完成了一批**视觉收尾**（6 项，都是此前登记过但一直没动的观感问题），并全部补上回归守卫——这类退化不会报任何错，只能靠断言拦：① **升级面板底部约 120 像素空白**：面板原本固定到 y=690，而最常见的 4 选 1 只用到 y=570；现在下沿按“最后一张实际可见卡片 + 26”动态设定，且取的是卡片真实的 `offset_bottom` 而非把几何抄一遍，改卡片高度时面板会自动跟随（断言 4 张与 5 张两种情况都要紧贴）。② **Boss 血条贴住机体**：机体轮廓在中心上方延伸 46 像素，而 `boss_hold_y` 只有 150，顶边 104 正好顶到血条下沿 113；改为 180 后顶边落到 134，留出 21 像素（断言至少 15）。③ **Boss 顶部是一条平直横边**：原 Hull 顶边是 `(44,-40) → (-44,-40)` 一条 88 像素水平线，看着像块板；改成中央尖顶加两侧缺口的轮廓，Plate 与 Core 同步做出内层尖顶（断言顶部至少有三种不同高度）。④ **受伤红闪 0.38 → 0.26**：0.38 时整屏泛红会短暂盖住敌机弹道，而受伤那一下恰恰最需要看清弹幕（断言不超过 0.30）。⑤ **爆炸粒子偏小**：14 粒 / 16px 贴图 / 缩放 0.6~1.5 → 20 粒 / 24px / 0.9~2.4，白光八角形半径 19 → 24（断言粒数与尺寸下限）。⑥ **背景偏素**：`Background` 从纯色 `ColorRect` 换成由内置 `Gradient` + `GradientTexture2D` 程序生成的竖向渐变贴图，航道线从 3 条加密到 5 条并分浓淡两层——依然零外部图片。**六项都用 VisualTest 生成实机截图逐张核对过**，不是只看断言放行。
+- **长时浸泡基准：把“长期局会不会越打越卡”从猜测变成数据。** 压力基准只测 6 秒，能证明"瞬时负载在预算内"，证明不了"时间长了会不会变差"；外部评估据此提出过"满配每秒 instantiate/free 上百节点，长期局有 GC 抖动风险"的担忧。新增的 `SoakTest` 让满配玩家连续打满 **{soak_seconds} 秒**（压力基准的十倍），对比前后半段的帧时间与实体峰值：实测 **前半 {soak_first_frame}ms → 后半 {soak_second_frame}ms**（毫无漂移）、早期实体峰值 {soak_early_peak} → 后期 {soak_late_peak}（没有增长）、停火后残留 {soak_residual}、对象净增 {soak_object_growth}。**结论：这条担忧不成立**，对象池依然不做。基准本身也固化成了断言（后半帧不超过前半的 1.25 倍、后期实体峰值不超过早期的 1.3 倍、残留必须为 0、对象净增有上限）。**它的边界也如实写明了**：60 秒仍不是完整的一局（真人一局 2~5 分钟），没有覆盖到那么长。
+- 按外部评估里**确实成立**的条目做了四项小修，并逐条补上回归：① **低速模式 + 判定范围**（Shift）：按住移速按 `focus_speed_scale` 降半，并显示**真实碰撞范围**。这里做了一个与评估建议不同的判断——它建议"中心画 2px 红点"，但本作命中盒是 34×42 的矩形而不是一个点，画点会让玩家以为自己更难被击中；所以改为显示真实矩形，且尺寸**直接从碰撞形状推导**，杜绝"提示与判定不符"。② **暂停 + 设置面板**（Esc）：震动开关、音乐/音效音量滑条、继续、重新开始，设置写进 `user://save.cfg` 的 `settings` 节并读回。暂停键由 HUD 处理而不是 Main——Main 是 PAUSABLE，整树一暂停它的输入回调就不再执行，那样就再也按不回来了。③ **逃敌压力的台阶消除**：原先 `int(逃敌压力)` 与 `int(时间)` 各自取整后相加，漏 3 架（+1.02）会在那一瞬间凭空多跳一级；改为把压力累加到时间轴上再取整，漏敌只是把下一次升级提前。④ **`boss_kills` 单独记录**：Boss 仍计入击毁总数（击毁就是击毁），但另存一份，事后分析才能把 1 点血的敌机与多血 Boss 分开。
+- **被评估指出、但核对后不成立的条目，也一并记录在案**，避免以后有人照着去修不存在的问题：`Player.gd` 的"monitoring 关闭时仍调 `get_overlapping_areas()`"早就有 `if not invulnerable and monitoring` 守卫（白名单里只有证书那一条，而全部验证日志与引擎日志中该错误零次出现）；"不射击的敌机颜色没赋值"实为设计色——红色按注释就是"不还手"的默认色。此外它引用的 ThreatTest 门槛（1.5 发/架、8 发/秒）是加随机种子之前的旧值，现已收紧到 2.5 / 12.0。
+- **一项被评估建议、实测后决定不做**：HUD 每帧刷新的脏标记。做了 A/B：把 `_refresh_hud()` 临时改成空函数再跑压力基准，**平均帧 8.24ms、帧 p99 13.88ms，与开启时完全一致**。省不到东西却会引入"界面不刷新"的回归风险，所以不做——判断依据写在文档里，不是凭直觉否决。
 - 压力基准本身也修了两处，都是**结论大于证据**的毛病：① 它原先按写死的 0.3 秒一架补敌机，比游戏在最高难度下的真实刷怪率还稀疏，所以"峰值 Actors 在预算内"这条结论对敌机密度并不成立——现改为直接取 `get_spawn_interval()`，压的是真实密度；② 它原先报"最差帧"，而同一个最大值在四次完全相同的运行里量到 14.21 / 17.13 / 14.21 / **78.85** ms（平均帧稳定在 8.24 ms），已被调度噪声主导，拿它论证"仍在 60 FPS 预算内"是错的证据——现改为报 p99。修正后实测：峰值子弹 **{peak_bullets}** 发、峰值 Actors **{peak_actors}** 个、平均帧 {avg_frame_ms} ms、帧时间 p99 {p99_frame_ms} ms，停火后残留 0。
 - 已对第 9 节最后一项“对象池”做了**实测评估，结论是不做**。最坏情况（射速与全部弹道类能力叠满、难度封顶、按住射击打满 6 秒、并按真实刷怪间隔持续补敌机）实测：峰值并发子弹 **{peak_bullets}** 发、峰值 Actors **{peak_actors}** 个、平均帧 {avg_frame_ms} ms、帧时间 p99 {p99_frame_ms} ms、停火后实体全部释放。对象周转远未到需要池化的量级；而池化必须重做 `spent`/`dead` 幂等锁、`run_id` 跨局票据与 `_clear_entities` 这三处最要命的约定，收益为零、风险不小。因此保留 `queue_free`，并把这条基准固化成 `tests/StressTest.gd`——弹幕密度若被改到远超今天的水平，它会先失败并提醒重新评估，而不是等玩家感到卡顿。
 - 顺带修掉了一个一直存在、但没有测试覆盖的缺陷：爆炸是帧末延迟生成的，而击杀可能当帧就触发升级抉择把 state 变成 LEVEL_UP，原先的守卫只允许 PLAYING，导致“击杀瞬间触发升级”时**一点爆炸都没有**。Boss 因为给分多必然触发升级，这条路径一定会走到。守卫现在只排除 READY/GAME_OVER。

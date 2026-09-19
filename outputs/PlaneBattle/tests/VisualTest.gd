@@ -64,6 +64,13 @@ func _run() -> void:
 	await create_timer(0.2).timeout
 	await capture("res://../playing-preview.png")
 
+	# 暂停与设置面板。走真实开关路径，截完立刻恢复——否则后面每一张截图都会停在暂停状态。
+	game.toggle_pause()
+	await create_timer(0.15).timeout
+	await capture("res://../pause-preview.png")
+	game.toggle_pause()
+	await create_timer(0.1).timeout
+
 	# 特效验收：两处爆炸 + 受伤红闪。这一张特意关掉震动，否则整幅画面会歪着，
 	# 反而看不清爆炸本身；震动另有断言覆盖。
 	game.screen_shake_enabled = false

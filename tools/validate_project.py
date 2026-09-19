@@ -22,13 +22,13 @@ from godot_log import classify
 ROOT = Path(__file__).resolve().parent.parent
 ENGINE = ROOT / 'tools/godot-4.7.2/Godot_v4.7.2-stable_win64_console.exe'
 
-# 压力基准与威胁基准都要跑满若干秒测量 + 等待清场，给它们的上限比其它模式宽一些；
-# 它们自带的看门狗是 75 秒，仍会先于这里触发并给出明确原因。
-TIMEOUTS = {'stress': 150, 'threat': 150}
+# 压力/威胁/浸泡基准都要跑满若干秒测量 + 等待清场，给它们的上限比其它模式宽一些；
+# 它们自带的看门狗（75 / 75 / 150 秒）仍会先于这里触发并给出明确原因。
+TIMEOUTS = {'stress': 150, 'threat': 150, 'soak': 240}
 DEFAULT_TIMEOUT = 90
 
 parser = argparse.ArgumentParser(description='用真实引擎验证 Godot 项目')
-parser.add_argument('mode', choices=('import', 'launch', 'smoke', 'visual', 'stress', 'threat'))
+parser.add_argument('mode', choices=('import', 'launch', 'smoke', 'visual', 'stress', 'threat', 'soak'))
 # 默认就是本仓库的工程；显式传入是为了验证交付 ZIP 解压出来的那一份（干净环境验证），
 # 而不是验证仓库里被各种缓存和中间产物覆盖过的工作副本。
 parser.add_argument('--project', default='outputs/PlaneBattle', help='要验证的工程目录')
@@ -59,6 +59,8 @@ elif args.mode == 'stress':
     cli = ['--headless', '--script', 'res://tests/StressTest.gd']
 elif args.mode == 'threat':
     cli = ['--headless', '--script', 'res://tests/ThreatTest.gd']
+elif args.mode == 'soak':
+    cli = ['--headless', '--script', 'res://tests/SoakTest.gd']
 elif args.mode == 'import':
     cli = ['--headless', '--editor', '--import', '--quit']
 elif args.mode == 'launch':

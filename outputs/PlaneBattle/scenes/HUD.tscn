@@ -321,3 +321,123 @@ offset_bottom = 664.0
 focus_mode = 0
 theme_override_font_sizes/font_size = 17
 text = "5"
+
+[node name="PauseOverlay" type="ColorRect" parent="."]
+visible = false
+layout_mode = 0
+offset_top = 90.0
+offset_right = 480.0
+offset_bottom = 756.0
+mouse_filter = 2
+color = Color(0.05, 0.13, 0.18, 0.55)
+
+[node name="PausePanel" type="Panel" parent="."]
+visible = false
+layout_mode = 0
+offset_left = 56.0
+offset_top = 236.0
+offset_right = 424.0
+offset_bottom = 566.0
+mouse_filter = 2
+
+[node name="PauseTitle" type="Label" parent="."]
+visible = false
+layout_mode = 0
+offset_left = 70.0
+offset_top = 252.0
+offset_right = 410.0
+offset_bottom = 288.0
+mouse_filter = 2
+theme_override_font_sizes/font_size = 22
+text = "已暂停"
+horizontal_alignment = 1
+
+[node name="ShakeCaption" type="Label" parent="."]
+visible = false
+layout_mode = 0
+offset_left = 76.0
+offset_top = 306.0
+offset_right = 228.0
+offset_bottom = 334.0
+mouse_filter = 2
+theme_override_colors/font_color = Color(0.32, 0.46, 0.53, 1)
+theme_override_font_sizes/font_size = 16
+text = "屏幕震动"
+
+[node name="ShakeButton" type="Button" parent="."]
+visible = false
+layout_mode = 0
+offset_left = 240.0
+offset_top = 300.0
+offset_right = 404.0
+offset_bottom = 340.0
+focus_mode = 0
+text = "开"
+
+[node name="MusicCaption" type="Label" parent="."]
+visible = false
+layout_mode = 0
+offset_left = 76.0
+offset_top = 356.0
+offset_right = 228.0
+offset_bottom = 384.0
+mouse_filter = 2
+theme_override_colors/font_color = Color(0.32, 0.46, 0.53, 1)
+theme_override_font_sizes/font_size = 16
+text = "音乐音量"
+
+[node name="MusicSlider" type="HSlider" parent="."]
+visible = false
+layout_mode = 0
+offset_left = 240.0
+offset_top = 356.0
+offset_right = 404.0
+offset_bottom = 384.0
+focus_mode = 0
+max_value = 100.0
+step = 5.0
+value = 50.0
+
+[node name="SfxCaption" type="Label" parent="."]
+visible = false
+layout_mode = 0
+offset_left = 76.0
+offset_top = 400.0
+offset_right = 228.0
+offset_bottom = 428.0
+mouse_filter = 2
+theme_override_colors/font_color = Color(0.32, 0.46, 0.53, 1)
+theme_override_font_sizes/font_size = 16
+text = "音效音量"
+
+[node name="SfxSlider" type="HSlider" parent="."]
+visible = false
+layout_mode = 0
+offset_left = 240.0
+offset_top = 400.0
+offset_right = 404.0
+offset_bottom = 428.0
+focus_mode = 0
+max_value = 100.0
+step = 5.0
+value = 70.0
+
+[node name="PauseResumeButton" type="Button" parent="."]
+visible = false
+layout_mode = 0
+offset_left = 76.0
+offset_top = 452.0
+offset_right = 404.0
+offset_bottom = 496.0
+focus_mode = 0
+text = "继续飞行  /  Esc"
+
+[node name="PauseRestartButton" type="Button" parent="."]
+visible = false
+layout_mode = 0
+offset_left = 76.0
+offset_top = 508.0
+offset_right = 404.0
+offset_bottom = 552.0
+focus_mode = 0
+text = "重新开始"

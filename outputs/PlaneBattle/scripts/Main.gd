@@ -35,6 +35,13 @@ const RUN_LOG_PATH: String = "user://runs.jsonl"
 ## 只保留最近多少局。记录是给调参用的，无限增长没有意义，还会让每次结算的
 ## 读写量越滚越大。
 const RUN_LOG_LIMIT: int = 50
+## 玩家设置与最高分放在同一个存档文件里，但用独立的节。
+## `_save_best_score()` 是“先读取再回写”，所以两边不会互相覆盖；
+## 反过来 `_save_settings()` 也一样——这正是当初把存档写成读-改-写的原因。
+const SETTINGS_SECTION: String = "settings"
+const SETTINGS_SHAKE: String = "screen_shake"
+const SETTINGS_MUSIC: String = "music_percent"
+const SETTINGS_SFX: String = "sfx_percent"
 
 ## 升级时的基础选项数；“幸运补给”每层再多给 1 个。
 const BASE_OFFERS: int = 4
@@ -138,6 +145,9 @@ var escape_pressure: float = 0.0
 ## 这里只补三件现有字段推不出来的：击毁总数、受伤次数、连击达到过的最高倍率。
 ## 峰值倍率必须单独记：受伤会把 combo 清零，光看结算时的 combo 永远是 0。
 var kills: int = 0
+## 其中属于 Boss 的次数。kills 是总数（含 Boss），这一项让“一架普通敌机”与
+## “一个多血 Boss”在事后分析里能分开。
+var boss_kills: int = 0
 var hits_taken: int = 0
 var peak_combo_multiplier: int = 1
 ## 每次受伤时的生存时间点。这不是玩法数据，而是给“这一局是被打死的、还是被主动结束的”
@@ -172,6 +182,10 @@ var _base_invulnerability: float = 0.0
 var _shake_tween: Tween
 var _sfx_players: Array[AudioStreamPlayer] = []
 var _sfx_cursor: int = 0
+## 玩家音量设置（0~100）。初始值从音频总线的实际音量反推，所以面板一打开
+## 显示的就是真实状态，而不是一个写死的 100%。
+var music_percent: int = 100
+var sfx_percent: int = 100
 
 func _ready() -> void:
 	# tuning 是 Resource 类型（项目约定不写 class_name，没法标成具体类型），所以
@@ -185,6 +199,10 @@ func _ready() -> void:
 	hud.start_game.connect(start_game)
 	hud.restart_game.connect(restart_game)
 	hud.upgrade_chosen.connect(choose_upgrade)
+	hud.pause_toggle_requested.connect(toggle_pause)
+	hud.pause_restarted.connect(_on_pause_restarted)
+	hud.shake_toggled.connect(_on_shake_toggled)
+	hud.volume_changed.connect(_on_volume_changed)
 	player.player_hit.connect(_on_player_hit)
 	player.shoot_requested.connect(_on_player_shoot_requested)
 	# 在能力改动之前记录 Player 的导出初值，供每次重开还原。
@@ -195,6 +213,7 @@ func _ready() -> void:
 	_reset_upgrades()
 	lives = initial_lives
 	_load_best_score()
+	_load_settings()
 	player.deactivate()
 	_refresh_hud()
 	hud.show_start()
@@ -203,8 +222,13 @@ func _process(delta: float) -> void:
 	if state != GameState.PLAYING:
 		return
 	survival_time += delta
+	# 逃敌压力**累加到时间轴上再取整**，而不是各自 int() 之后相加。
+	# 旧写法有两个台阶：int(escape_pressure) 每跨过 1.0，难度就在那一瞬间凭空多跳一级
+	# （漏 3 架 = 1.02，正好跨过），玩家会觉得“怎么突然变难”，而且那一下与时间进度无关。
+	# 累加进时间轴之后，漏敌只是把下一次升级**提前**，升级本身仍然是那条平滑的时间曲线；
+	# 压力本身没有变小——漏得越多，难度来得越早，这一条没变。
 	difficulty_level = clampi(
-		1 + int(survival_time / maxf(level_step_seconds, 1.0)) + int(escape_pressure),
+		1 + int(survival_time / maxf(level_step_seconds, 1.0) + escape_pressure),
 		1,
 		effective_max_level()
 	)
@@ -248,8 +272,10 @@ func _unhandled_input(event: InputEvent) -> void:
 		elif state == GameState.READY:
 			start_game()
 
-func start_game() -> void:
-	if state == GameState.PLAYING:
+func start_game(force: bool = false) -> void:
+	# force 供暂停面板的“重新开始”使用：那时 state 仍是 PLAYING，
+	# 而普通情况下 PLAYING 期间重开是要被挡掉的（避免误触 R）。
+	if state == GameState.PLAYING and not force:
 		return
 	# 先使上一局的延迟生成请求失效，再复位场景。
 	run_id += 1
@@ -259,6 +285,8 @@ func start_game() -> void:
 	_set_paused(false)
 	_stop_screen_shake()
 	hud.hide_level_up()
+	# 从暂停面板重开时面板也开着，一并收起（它自己不会因为 _set_paused 而消失）。
+	hud.hide_pause()
 	offers = []
 	_reset_upgrades()
 	score = 0
@@ -273,6 +301,7 @@ func start_game() -> void:
 	escaped_count = 0
 	escape_pressure = 0.0
 	kills = 0
+	boss_kills = 0
 	hits_taken = 0
 	peak_combo_multiplier = 1
 	hit_times.clear()
@@ -334,6 +363,7 @@ func game_over() -> void:
 	_clear_entities()
 	# 结算必须解除暂停，否则重开后整个世界都不再前进。
 	_set_paused(false)
+	hud.hide_pause()
 	# 震动也要停掉并归零，否则结算画面会一直歪着。
 	_stop_screen_shake()
 	hud.hide_level_up()
@@ -504,6 +534,10 @@ func _on_boss_destroyed(points: int) -> void:
 	# 只需在这里换成显示通关界面并停局，其余逻辑都不用动。
 	var center: Vector2 = boss.global_position
 	boss = null
+	# 单独记一次 Boss 击毁。`kills` 是“击毁总数”，Boss 也会走 add_score 被算进去——
+	# 那是有意的（击毁就是击毁），但把 1 点血的敌机和上万血的 Boss 混在一个数字里，
+	# 事后按击毁数分析时就分不出“这一局打了多少架普通敌机”，所以记录里另存一份。
+	boss_kills += 1
 	hud.hide_boss()
 	_play_sfx(SFX_EXPLOSION)
 	# 这么大的目标不该只炸一下：沿机身撒开几处，看起来才是整体崩解。
@@ -968,6 +1002,7 @@ func _build_run_report(is_new_record: bool) -> Dictionary:
 		"level": level,
 		"difficulty": difficulty_level,
 		"kills": kills,
+		"boss_kills": boss_kills,
 		"hits": hits_taken,
 		"hit_times": hit_times.duplicate(),
 		"escapes": escaped_count,
@@ -1033,3 +1068,81 @@ func _append_run_log(record: Dictionary) -> void:
 	for line in lines:
 		writer.store_line(line)
 	writer.close()
+
+func toggle_pause() -> void:
+	# 只有“正在游戏”才允许暂停：开始界面、结算界面各有自己的语义，
+	# 而升级抉择期间整树已经暂停，再叠一层会让状态变得含糊。
+	if state != GameState.PLAYING:
+		return
+	if get_tree().paused:
+		_set_paused(false)
+		hud.hide_pause()
+	else:
+		_set_paused(true)
+		# 打开面板时把三项设置的真实值一起带过去——HUD 只负责显示，不持有规则。
+		hud.show_pause(screen_shake_enabled, music_percent, sfx_percent)
+
+func _on_pause_restarted() -> void:
+	# state 仍是 PLAYING，所以要 force；解除暂停由 start_game 自己负责，这里先收起面板。
+	start_game(true)
+
+func _on_shake_toggled(enabled: bool) -> void:
+	screen_shake_enabled = enabled
+	_save_settings()
+
+func _on_volume_changed(bus_name: String, percent: int) -> void:
+	if bus_name == "Music":
+		music_percent = clampi(percent, 0, 100)
+	else:
+		sfx_percent = clampi(percent, 0, 100)
+	_apply_audio_settings()
+	_save_settings()
+
+func _load_settings() -> void:
+	# 默认值取自音频总线**当前的实际音量**，而不是写死 100%：
+	# 总线布局里 Music 是 -6 dB、SFX 是 -3 dB，直接写 100 会让面板显示的值与实况不符。
+	music_percent = _bus_percent("Music")
+	sfx_percent = _bus_percent("SFX")
+	if not FileAccess.file_exists(SAVE_PATH):
+		return
+	var config := ConfigFile.new()
+	if config.load(SAVE_PATH) != OK:
+		# 存档损坏不是错误：设置退回默认值即可，最高分那边有自己的告警。
+		return
+	screen_shake_enabled = bool(config.get_value(SETTINGS_SECTION, SETTINGS_SHAKE, screen_shake_enabled))
+	music_percent = clampi(int(config.get_value(SETTINGS_SECTION, SETTINGS_MUSIC, music_percent)), 0, 100)
+	sfx_percent = clampi(int(config.get_value(SETTINGS_SECTION, SETTINGS_SFX, sfx_percent)), 0, 100)
+	_apply_audio_settings()
+
+func _save_settings() -> void:
+	# 与 _save_best_score() 一样先读取再回写：records 与 settings 两个节互不覆盖。
+	var config := ConfigFile.new()
+	config.load(SAVE_PATH)
+	config.set_value(SETTINGS_SECTION, SETTINGS_SHAKE, screen_shake_enabled)
+	config.set_value(SETTINGS_SECTION, SETTINGS_MUSIC, music_percent)
+	config.set_value(SETTINGS_SECTION, SETTINGS_SFX, sfx_percent)
+	var error: Error = config.save(SAVE_PATH)
+	if error != OK:
+		# 写盘失败不阻断游玩：设置仍留在内存里，本局照常。
+		push_warning("设置写入失败（%s）：%s" % [error_string(error), SAVE_PATH])
+
+func _bus_percent(bus_name: String) -> int:
+	var index: int = AudioServer.get_bus_index(bus_name)
+	if index < 0 or AudioServer.is_bus_mute(index):
+		return 0
+	return clampi(int(round(db_to_linear(AudioServer.get_bus_volume_db(index)) * 100.0)), 0, 100)
+
+func _apply_audio_settings() -> void:
+	_set_bus_percent("Music", music_percent)
+	_set_bus_percent("SFX", sfx_percent)
+
+func _set_bus_percent(bus_name: String, percent: int) -> void:
+	var index: int = AudioServer.get_bus_index(bus_name)
+	if index < 0:
+		# 总线不存在说明 default_bus_layout.tres 没被加载，代码里的 bus="Music" 会静默回落，
+		# 音量滑条则会变成一个没有任何作用的控件——所以这里必须出声，不能沉默。
+		push_warning("找不到音频总线，音量设置无效：%s" % bus_name)
+		return
+	AudioServer.set_bus_mute(index, percent <= 0)
+	# 线性 0 换算出的是 -inf dB，所以先夹一个极小值再换算。
+	AudioServer.set_bus_volume_db(index, linear_to_db(maxf(float(percent) / 100.0, 0.0001)))

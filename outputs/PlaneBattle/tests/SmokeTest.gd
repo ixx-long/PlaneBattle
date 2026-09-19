@@ -240,8 +240,21 @@ func _run() -> void:
 
 	check(game.hud.start_button.visible and not game.player.active, "start menu and inactive player")
 	check(game.enemy_timer.is_stopped(), "no spawns before start")
-	for action in ["move_left", "move_right", "move_up", "move_down", "shoot", "restart"]:
+	for action in ["move_left", "move_right", "move_up", "move_down", "shoot", "restart", "focus", "pause"]:
 		check(InputMap.has_action(action), "input action: " + action)
+	# 键码不靠肉眼核对：拿 project.godot 里写的值与引擎常量比。
+	# 这两个数字（4194325 / 4194305）是手写进 .cfg 的，写错不会有任何报错，
+	# 只会表现成“按键没反应”，所以必须由测试来对。
+	var focus_bound_to_shift := false
+	for event in InputMap.action_get_events("focus"):
+		if event is InputEventKey and (event as InputEventKey).physical_keycode == KEY_SHIFT:
+			focus_bound_to_shift = true
+	check(focus_bound_to_shift, "低速模式绑定在 Shift 上（与引擎的 KEY_SHIFT 常量一致）")
+	var pause_bound_to_escape := false
+	for event in InputMap.action_get_events("pause"):
+		if event is InputEventKey and (event as InputEventKey).physical_keycode == KEY_ESCAPE:
+			pause_bound_to_escape = true
+	check(pause_bound_to_escape, "暂停绑定在 Esc 上（与引擎的 KEY_ESCAPE 常量一致）")
 	game.hud.start_button.pressed.emit()
 	await settle()
 	check(game.state == game.GameState.PLAYING and game.player.active, "start button starts game")
@@ -264,6 +277,39 @@ func _run() -> void:
 	game.player.position = Vector2(1000, 1000)
 	await settle()
 	check(game.player.position.x <= 450 and game.player.position.y <= 764, "right and bottom bounds")
+	game.player.position = Vector2(240, 650)
+	# 低速模式与判定范围提示。判定提示的尺寸直接取自碰撞形状，所以这里也对着形状验，
+	# 而不是对着场景里写死的数字——那两处一旦漂移，提示就会开始说谎。
+	var player_shape: Shape2D = game.player.get_node("CollisionShape2D").shape
+	check(player_shape is RectangleShape2D, "玩家碰撞形状是矩形（判定提示据此绘制）")
+	var hint: Polygon2D = game.player.get_node("Visual/HitboxHint/Area")
+	var hint_width: float = 0.0
+	var hint_height: float = 0.0
+	for point in hint.polygon:
+		hint_width = maxf(hint_width, absf(point.x) * 2.0)
+		hint_height = maxf(hint_height, absf(point.y) * 2.0)
+	check(
+		is_equal_approx(hint_width, (player_shape as RectangleShape2D).size.x)
+			and is_equal_approx(hint_height, (player_shape as RectangleShape2D).size.y),
+		"判定提示的尺寸与真实碰撞形状完全一致（不会显示一个更小的假判定点）"
+	)
+	check(not game.player.hitbox_hint.visible, "不按低速键时不显示判定范围")
+	game.player.position = Vector2(240, 600)
+	Input.action_press("move_right")
+	game.player._physics_process(0.1)
+	var normal_step: float = game.player.position.x - 240.0
+	game.player.position = Vector2(240, 600)
+	Input.action_press("focus")
+	game.player._physics_process(0.1)
+	var focus_step: float = game.player.position.x - 240.0
+	check(game.player.hitbox_hint.visible, "按住低速键时显示判定范围")
+	check(
+		is_equal_approx(focus_step, normal_step * game.player.focus_speed_scale),
+		"低速模式把移速按倍率减慢"
+	)
+	check(focus_step > 0.0 and focus_step < normal_step, "低速仍然是移动，只是更慢")
+	Input.action_release("focus")
+	Input.action_release("move_right")
 	game.player.position = Vector2(240, 650)
 	Input.action_press("shoot")
 	await create_timer(0.21).timeout
@@ -1464,6 +1510,11 @@ func _run() -> void:
 	game.xp = 0
 	game.boss.take_hit()
 	check(game.boss == null, "生命归零后 Boss 被击破且 Main 释放了引用")
+	# Boss 也会走 add_score，因此被算进 kills——那是有意的（击毁就是击毁）。
+	# 但 1 点血的敌机与上万血的 Boss 混成一个数字后，按击毁数分析时分不出普通敌机，
+	# 所以另存一份 boss_kills，两者必须同时成立。
+	check(game.boss_kills >= 1, "击破 Boss 会单独计入 Boss 击毁数")
+	check(game.kills > game.boss_kills, "Boss 计入击毁总数，但两者分开记录")
 	# 额外补的经验只有**半级**。补一整级时，单个 Boss 的总经验收益（奖励分 ×经验倍率
 	# 再外加一整级）相当于约 100 架普通敌机——真人第一局里 9 个 Boss 占了约 71% 的总
 	# 经验，升级于是变成"等 Boss"而不是"打得准"。这里按半级逐项算出期望值再比对：
@@ -1648,6 +1699,19 @@ func _run() -> void:
 		"逃敌压力直接加到难度等级上——苟着不打会让天越来越难"
 	)
 
+	# 压力是累加到**时间轴**上再取整的，不是各自取整后相加。
+	# 旧写法有个与时间无关的台阶：int(escape_pressure) 每跨过 1.0 就凭空多跳一级
+	# （漏 3 架 = 1.02 正好跨过），玩家会觉得“怎么突然变难”。
+	# 下面这条用分数压力把这个行为钉死：0.6 级时间 + 0.5 级压力 = 1.1，应当跨到第 2 级。
+	# 分开取整的旧写法只会得到 1 + 0 + 0 = 1 级，所以它能守住回归。
+	game.survival_time = game.level_step_seconds * 0.6
+	game.escape_pressure = 0.5
+	game._process(0.0)
+	check(
+		game.difficulty_level == 2,
+		"时间与逃敌压力在同一条时间轴上合并取整（0.6 级 + 0.5 级正好跨到第 2 级）"
+	)
+
 	# 压力有上限，不能无限抬高。
 	game.escape_pressure = game.tuning.escape_pressure_cap
 	for index in range(5):
@@ -1668,12 +1732,105 @@ func _run() -> void:
 		"重开清空连击、逃敌数与难度压力"
 	)
 
+	# --- 暂停与设置面板 ---
+	check(game.state == game.GameState.PLAYING, "（前提）暂停测试从进行中的一局开始")
+	check(not game.hud.pause_panel.visible, "（前提）暂停面板初始隐藏")
+	game.toggle_pause()
+	check(game.get_tree().paused, "按暂停会冻结整个世界")
+	check(game.hud.pause_panel.visible, "暂停面板出现")
+	check(game.state == game.GameState.PLAYING, "暂停不改状态，只冻结世界")
+	# 暂停中必须还能按回来：这个键由 HUD 处理（PROCESS_MODE_ALWAYS）。若交给 PAUSABLE 的
+	# Main，整树一暂停它的 _unhandled_input 就不再执行，玩家会被永久卡在暂停里。
+	game.toggle_pause()
+	check(not game.get_tree().paused and not game.hud.pause_panel.visible, "再按一次恢复并收起面板")
+
+	game.game_over()
+	game.toggle_pause()
+	check(not game.get_tree().paused, "结算状态下不接受暂停")
+	game.restart_game()
+	game.enemy_timer.stop()
+
+	# 暂停面板的控件都必须落在面板内，否则会出现“按钮飘在面板外面”。
+	var panel: Panel = game.hud.pause_panel
+	var controls_inside := true
+	for node in [
+		game.hud.pause_title, game.hud.shake_caption, game.hud.shake_button,
+		game.hud.music_caption, game.hud.music_slider, game.hud.sfx_caption,
+		game.hud.sfx_slider, game.hud.pause_resume_button, game.hud.pause_restart_button,
+	]:
+		if node.offset_left < panel.offset_left or node.offset_right > panel.offset_right \
+				or node.offset_top < panel.offset_top or node.offset_bottom > panel.offset_bottom:
+			controls_inside = false
+	check(controls_inside, "暂停面板的所有控件都在面板范围内")
+
+	# 震动开关：按钮显示当前状态，发出的是取反后的期望值。
+	var shake_before: bool = game.screen_shake_enabled
+	game.toggle_pause()
+	check(
+		game.hud.shake_button.text == ("开" if shake_before else "关"),
+		"暂停面板显示的是真实的震动开关状态"
+	)
+	game.hud.shake_button.pressed.emit()
+	check(game.screen_shake_enabled != shake_before, "点震动按钮会切换开关")
+	check(
+		game.hud.shake_button.text == ("开" if game.screen_shake_enabled else "关"),
+		"按钮文字跟着状态更新"
+	)
+	game.hud.shake_button.pressed.emit()
+	check(game.screen_shake_enabled == shake_before, "再点一次切回原值")
+
+	# 音量：滑条改的必须是音频总线的真实音量，而不是只存一个数。
+	# 默认值也不是写死的 100%——总线布局里 Music 是 -6 dB，所以要能反映出约 50%。
+	var music_before: int = game.music_percent
+	var music_index: int = AudioServer.get_bus_index("Music")
+	check(
+		absf(db_to_linear(AudioServer.get_bus_volume_db(music_index)) - float(music_before) / 100.0) < 0.02,
+		"初始音量来自总线实际值，而不是写死的 100%"
+	)
+	game.hud.music_slider.value = 0.0
+	check(game.music_percent == 0, "滑条拖到 0 会更新设置")
+	check(AudioServer.is_bus_mute(music_index), "0% 时真的把总线静音了")
+	game.hud.music_slider.value = 60.0
+	check(
+		absf(db_to_linear(AudioServer.get_bus_volume_db(music_index)) - 0.6) < 0.02,
+		"60% 换算到分贝再换算回来仍然是 0.6"
+	)
+	game.hud.music_slider.value = float(music_before)
+	check(game.music_percent == music_before, "音量已还原，不影响后续断言")
+
+	# 设置要落盘，换一个新实例必须读回同样的值。
+	game.hud.shake_toggled.emit(not shake_before)
+	var settings_probe = load("res://scenes/Main.tscn").instantiate()
+	root.add_child(settings_probe)
+	await settle()
+	check(settings_probe.screen_shake_enabled != shake_before, "新实例从磁盘读回震动设置")
+	check(settings_probe.music_percent == music_before, "新实例从磁盘读回音量设置")
+	settings_probe.queue_free()
+	await settle()
+	game.hud.shake_toggled.emit(shake_before)
+
+	# 震动与音量都是在暂停面板里改的，所以到这里游戏仍处于暂停——先显式退出，
+	# 否则下面那次 toggle_pause() 会变成“恢复”而不是“暂停”，断言会莫名其妙地失败。
+	game.toggle_pause()
+	check(not game.get_tree().paused and not game.hud.pause_panel.visible, "（收尾）退出暂停面板")
+
+	# 从暂停面板重开：此时 state 仍是 PLAYING，所以必须走 force 分支，
+	# 否则 start_game() 会因为“进行中不许重开”而直接早退。
+	game.toggle_pause()
+	check(game.get_tree().paused, "（前提）已处于暂停")
+	game.hud.pause_restart_button.pressed.emit()
+	check(not game.get_tree().paused, "从暂停面板重开会解除暂停")
+	check(not game.hud.pause_panel.visible, "重开后暂停面板收起")
+	check(game.state == game.GameState.PLAYING and game.player.active, "重开后是新的进行中一局")
+	check(game.score == 0 and game.lives == game.initial_lives, "重开后分数与生命复位")
+	game.enemy_timer.stop()
+
 	# --- 本局战报与对局记录 ---
 	# 战报依赖三个新计数器，先确认它们确实被重开清干净了。
 	check(
-		game.kills == 0 and game.hits_taken == 0 and game.peak_combo_multiplier == 1
-			and game.hit_times.is_empty(),
-		"重开清空击毁数、受伤次数、最高倍率与受伤时间点"
+		game.kills == 0 and game.boss_kills == 0 and game.hits_taken == 0
+			and game.peak_combo_multiplier == 1 and game.hit_times.is_empty(),
+		"重开清空击毁数（含 Boss 计数）、受伤次数、最高倍率与受伤时间点"
 	)
 	check(game.RUN_LOG_PATH == RUN_LOG_FILE, "测试与游戏读写同一份对局记录")
 
@@ -1722,6 +1879,7 @@ func _run() -> void:
 	check(int(entry.get("score", -1)) == scored, "记录里的分数与本局一致")
 	check(int(entry.get("best", -1)) == game.best_score, "记录里的最高分与当前纪录一致")
 	check(int(entry.get("kills", -1)) == game.kills, "记录里的击毁数与本局一致")
+	check(int(entry.get("boss_kills", -1)) == game.boss_kills, "记录里单独存了 Boss 击毁数")
 	check(int(entry.get("hits", -1)) == 1, "记录里的受伤次数与本局一致")
 	# 时间点序列必须单调不减，才能用来判断“最后几次受伤是不是挨得极近”。
 	# 真人前两局都是主动结束，而当时的记录只有“存活 N 秒、受伤 M 次”，

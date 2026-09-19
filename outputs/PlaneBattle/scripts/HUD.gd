@@ -7,6 +7,12 @@ extends Control
 signal start_game
 signal restart_game
 signal upgrade_chosen(index: int)
+## 暂停面板请求。HUD 只报告“玩家按了什么”，改不改规则由 Main 决定。
+signal pause_toggle_requested
+signal pause_restarted
+signal shake_toggled(enabled: bool)
+## 音量：bus_name 取 "Music" / "SFX"，percent 为 0~100。
+signal volume_changed(bus_name: String, percent: int)
 
 ## 与 Main 的选项数上限一一对应的键位，下标即卡片下标。基础 4 个，
 ## “幸运补给”可以让选项加到 5，所以这里准备好 5 个动作。
@@ -45,6 +51,17 @@ const CHOICE_ACTIONS: Array[String] = ["choice_1", "choice_2", "choice_3", "choi
 @onready var upgrade_cards: Array[Button] = [
 	$UpgradeCard0, $UpgradeCard1, $UpgradeCard2, $UpgradeCard3, $UpgradeCard4,
 ]
+@onready var pause_overlay: ColorRect = $PauseOverlay
+@onready var pause_panel: Panel = $PausePanel
+@onready var pause_title: Label = $PauseTitle
+@onready var shake_caption: Label = $ShakeCaption
+@onready var shake_button: Button = $ShakeButton
+@onready var music_caption: Label = $MusicCaption
+@onready var music_slider: HSlider = $MusicSlider
+@onready var sfx_caption: Label = $SfxCaption
+@onready var sfx_slider: HSlider = $SfxSlider
+@onready var pause_resume_button: Button = $PauseResumeButton
+@onready var pause_restart_button: Button = $PauseRestartButton
 
 var _damage_tween: Tween
 var _pulse_tween: Tween
@@ -52,9 +69,15 @@ var _pulse_tween: Tween
 func _ready() -> void:
 	start_button.pressed.connect(_on_start_pressed)
 	restart_button.pressed.connect(_on_restart_pressed)
+	shake_button.pressed.connect(_on_shake_pressed)
+	music_slider.value_changed.connect(_on_music_changed)
+	sfx_slider.value_changed.connect(_on_sfx_changed)
+	pause_resume_button.pressed.connect(_on_pause_resume_pressed)
+	pause_restart_button.pressed.connect(_on_pause_restart_pressed)
 	for index in range(upgrade_cards.size()):
 		upgrade_cards[index].pressed.connect(_on_upgrade_card_pressed.bind(index))
 	hide_level_up()
+	hide_pause()
 
 func update_stats(points: int, remaining_lives: int, elapsed: float, level: int, wave: int) -> void:
 	score_label.text = "分数  %06d" % points
@@ -179,8 +202,44 @@ func hide_level_up() -> void:
 		card.visible = false
 		card.disabled = true
 
+## 暂停面板上震动开关**当前显示**的状态。由按钮自己维护：如果只在 show_pause() 里刷新文字，
+## 玩家按下之后文字不会变，会以为没生效——第一版就是这样，被回归断言抓到了。
+var _shake_shown: bool = true
+
+func show_pause(shake_enabled: bool, music_percent: int, sfx_percent: int) -> void:
+	# 一次把三项设置的真实值都摆出来。滑条用 set_value_no_signal 避免打开面板时
+	# 反过来触发一轮 volume_changed——那一轮是无害的，但会让“打开面板”变成一次设置写入。
+	_shake_shown = shake_enabled
+	shake_button.text = "开" if shake_enabled else "关"
+	music_slider.set_value_no_signal(float(music_percent))
+	sfx_slider.set_value_no_signal(float(sfx_percent))
+	for node in [
+		pause_overlay, pause_panel, pause_title, shake_caption, shake_button,
+		music_caption, music_slider, sfx_caption, sfx_slider,
+		pause_resume_button, pause_restart_button,
+	]:
+		node.visible = true
+
+func hide_pause() -> void:
+	for node in [
+		pause_overlay, pause_panel, pause_title, shake_caption, shake_button,
+		music_caption, music_slider, sfx_caption, sfx_slider,
+		pause_resume_button, pause_restart_button,
+	]:
+		node.visible = false
+
 func _unhandled_input(event: InputEvent) -> void:
-	# 只在抉择界面可见时接管数字键，平时 1/2/3 不占用任何操作。
+	# 暂停键必须在**暂停中也能收到**，所以由 HUD（PROCESS_MODE_ALWAYS）处理而不是 Main：
+	# Main 是 PAUSABLE，整树一暂停它的 _unhandled_input 就不再执行，那样就再也按不回来了。
+	if event.is_action_pressed("pause") and not event.is_echo():
+		# 只在“正在游戏”或“已暂停”时接管。开始界面、结算界面、升级抉择各有自己的语义
+		# （抉择期间整树已经暂停，再叠一层会让状态含糊），所以用那三个界面的可见性排除。
+		var in_game: bool = not level_up_panel.visible and not start_button.visible and not restart_button.visible
+		if pause_panel.visible or in_game:
+			get_viewport().set_input_as_handled()
+			pause_toggle_requested.emit()
+			return
+	# 数字键只在抉择界面可见时接管，平时 1/2/3 不占用任何操作。
 	if not level_up_panel.visible or event.is_echo():
 		return
 	for index in range(CHOICE_ACTIONS.size()):
@@ -208,3 +267,25 @@ func _on_upgrade_card_pressed(index: int) -> void:
 		return
 	upgrade_cards[index].release_focus()
 	upgrade_chosen.emit(index)
+
+func _on_shake_pressed() -> void:
+	shake_button.release_focus()
+	# 先把显示切过去，再报告期望值——按钮的即时反馈由自己负责，
+	# 而不是等 Main 回过来刷新（那会导致按下之后文字不动）。
+	_shake_shown = not _shake_shown
+	shake_button.text = "开" if _shake_shown else "关"
+	shake_toggled.emit(_shake_shown)
+
+func _on_music_changed(value: float) -> void:
+	volume_changed.emit("Music", int(round(value)))
+
+func _on_sfx_changed(value: float) -> void:
+	volume_changed.emit("SFX", int(round(value)))
+
+func _on_pause_resume_pressed() -> void:
+	pause_resume_button.release_focus()
+	pause_toggle_requested.emit()
+
+func _on_pause_restart_pressed() -> void:
+	pause_restart_button.release_focus()
+	pause_restarted.emit()
