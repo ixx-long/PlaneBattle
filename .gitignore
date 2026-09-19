@@ -1,0 +1,47 @@
+# --- Godot 生成的导入缓存与编辑器状态 ---
+# 完全由引擎重建，且体积不小（当前约 2.6 MB）。删掉后重新导入即可复原。
+outputs/PlaneBattle/.godot/
+
+# --- 引擎二进制（约 173 MB）---
+# 不随源码分发，交付 ZIP 里也不含它；接收方需自行安装 Godot 4.7.2。
+tools/godot-4.7.2/
+tools/godot-4.7.2.zip
+
+# --- 自动化测试的隔离 user:// 目录 ---
+# tools/validate_project.py 会把 APPDATA 指到这里，因此存档、对局记录、日志、
+# 着色器缓存全都落在工作区内而不污染真实用户目录。这些是运行产物。
+tools/test-profile/
+
+# --- 干净环境验证的临时目录 ---
+# 正常流程结束时会删除；列在这里是防止验证中途被打断而把它们提交进来。
+outputs/_cleanroom*/
+outputs/_cleanroom-logs/
+outputs/_cleanroom-profile/
+
+# --- 引擎状态被写错位置时留下的残留 ---
+# 正常情况下 user:// 走 %APPDATA%，自动化测试走 tools/test-profile/。
+# 但 APPDATA 为空时引擎会退回到相对路径，在工程目录里建出 Godot/app_userdata/，
+# 工作区根目录也出现过一份编辑器设置。它们都是运行产物，不是源码。
+Godot/
+outputs/PlaneBattle/Godot/
+
+# --- Python 字节码缓存 ---
+__pycache__/
+*.pyc
+
+# --- 工具自身的状态目录（不是本项目的源码）---
+.workbuddy-ai/
+
+# --- 由 tools/build_deliverables.py 生成的交付物与验证日志 ---
+# 这些是**产物而不是源码**：文档由 tools/document_sections.py 加逐字嵌入的源码生成，
+# ZIP 由工程目录打包，两者跑一遍流水线就能重建。不提交有两个具体理由：
+#   1. 验证日志里含实测帧时间等每次都会变的数字，提交它们会让每次构建都产生噪声 diff；
+#   2. 而流水线本身要求日志必须是本次运行产生的（require_clean），提交旧日志反而有害。
+# 注意：工程里的音频 WAV 与 .import 文件是**源码**，必须提交——它们由
+# tools/generate_audio.py 逐字节复现，游戏运行时需要它们。
+outputs/*.png
+outputs/*-results.txt
+outputs/*.zip
+outputs/*.md
+outputs/*.html
+outputs/验证报告.txt

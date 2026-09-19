@@ -1,0 +1,92 @@
+[gd_resource type="Resource" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/WaveTuning.gd" id="1"]
+
+[resource]
+script = ExtResource("1")
+level_step_seconds = 9.0
+max_level = 30
+max_level_per_player_level = 1
+spawn_interval_base = 1.05
+spawn_interval_decay = 0.075
+spawn_interval_floor = 0.18
+spawn_interval_tail = 0.983
+first_wave_delay = 0.65
+wave_gap = 1.4
+cycle_count_bonus_cap = 3
+speed_min = 100.0
+speed_max = 150.0
+speed_per_level = 14.0
+speed_cap = 460.0
+shooter_chance_base = 0.45
+shooter_chance_per_level = 0.04
+shooter_chance_cap = 0.85
+shoot_interval_base = 1.8
+shoot_interval_decay = 0.08
+shoot_interval_floor = 0.45
+shoot_interval_tail = 0.98
+first_shot_delay_min = 0.55
+first_shot_delay_max = 1.1
+volley_every_levels = 10
+volley_cap = 3
+volley_spread_degrees = 13.0
+bullet_speed_base = 240.0
+bullet_speed_per_level = 12.0
+bullet_speed_cap = 560.0
+aim_ratio_per_level = 0.02
+aim_ratio_cap = 0.85
+escape_pressure_per_enemy = 0.34
+escape_pressure_cap = 12.0
+boss_target_seconds = 7.0
+boss_hp_floor = 45
+boss_hp_cap = 1400
+boss_hold_y = 150.0
+boss_enter_speed = 90.0
+boss_cruise_speed = 72.0
+boss_margin = 96.0
+boss_volley_interval = 1.1
+boss_volley_interval_floor = 0.7
+boss_volley_decay = 0.15
+boss_fan_count = 5
+boss_fan_count_cap = 11
+boss_fan_degrees = 64.0
+boss_bullet_speed = 210.0
+boss_bullet_speed_cap = 520.0
+boss_score = 500
+boss_xp_levels = 0.5
+waves = Array[Dictionary]([{
+"aim_ratio": 0.15,
+"count": 4,
+"formation": "random",
+"name": "侦察队",
+"shooter_bonus": 0.0,
+"speed_scale": 1.0
+}, {
+"aim_ratio": 0.25,
+"count": 5,
+"formation": "line",
+"name": "横列",
+"shooter_bonus": 0.0,
+"speed_scale": 1.05
+}, {
+"aim_ratio": 0.35,
+"count": 6,
+"formation": "arc",
+"name": "两翼",
+"shooter_bonus": 0.05,
+"speed_scale": 1.1
+}, {
+"aim_ratio": 0.5,
+"count": 6,
+"formation": "random",
+"name": "混编",
+"shooter_bonus": 0.12,
+"speed_scale": 1.15
+}, {
+"aim_ratio": 0.65,
+"count": 5,
+"formation": "line",
+"name": "精锐",
+"shooter_bonus": 0.2,
+"speed_scale": 1.25
+}])

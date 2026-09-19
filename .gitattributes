@@ -1,0 +1,10 @@
+# 统一行尾为 LF。
+# 工程源码与生成的文档都是 LF；不做这个约定的话，Git 在 Windows 上检出时会按
+# core.autocrlf 把整文件转成 CRLF，于是每次提交都出现“整个文件都改了”的假 diff，
+# 真正的改动反而被淹没。
+* text=auto eol=lf
+
+# 二进制资源不做行尾转换。
+*.png binary
+*.wav binary
+*.zip binary

@@ -1,0 +1,47 @@
+[gd_resource type="Theme" load_steps=5 format=3]
+
+[sub_resource type="SystemFont" id="UIFont"]
+font_names = PackedStringArray("Microsoft YaHei", "Noto Sans CJK SC", "PingFang SC", "WenQuanYi Zen Hei")
+
+[sub_resource type="StyleBoxFlat" id="NormalButton"]
+bg_color = Color(0.79, 0.91, 0.95, 1)
+border_width_left = 1
+border_width_top = 1
+border_width_right = 1
+border_width_bottom = 1
+border_color = Color(0.30, 0.60, 0.69, 1)
+corner_radius_top_left = 12
+corner_radius_top_right = 12
+corner_radius_bottom_left = 12
+corner_radius_bottom_right = 12
+
+[sub_resource type="StyleBoxFlat" id="HoverButton"]
+bg_color = Color(0.66, 0.86, 0.92, 1)
+corner_radius_top_left = 12
+corner_radius_top_right = 12
+corner_radius_bottom_left = 12
+corner_radius_bottom_right = 12
+
+[sub_resource type="StyleBoxFlat" id="Card"]
+bg_color = Color(0.98, 0.99, 1, 1)
+border_width_left = 1
+border_width_top = 1
+border_width_right = 1
+border_width_bottom = 1
+border_color = Color(0.70, 0.81, 0.86, 1)
+corner_radius_top_left = 18
+corner_radius_top_right = 18
+corner_radius_bottom_left = 18
+corner_radius_bottom_right = 18
+
+[resource]
+default_font = SubResource("UIFont")
+default_font_size = 18
+Label/colors/font_color = Color(0.13, 0.24, 0.30, 1)
+Button/colors/font_color = Color(0.06, 0.27, 0.35, 1)
+Button/colors/font_hover_color = Color(0.04, 0.20, 0.28, 1)
+Button/colors/font_pressed_color = Color(0.04, 0.20, 0.28, 1)
+Button/styles/normal = SubResource("NormalButton")
+Button/styles/hover = SubResource("HoverButton")
+Button/styles/pressed = SubResource("HoverButton")
+Panel/styles/panel = SubResource("Card")
