@@ -89,10 +89,10 @@ const SHIPS: Array[Dictionary] = [
 		"id": "parallel",
 		"name": "标准型",
 		"detail": "平行弹幕 · 每级一条竖直车道，弹幕墙能靠拦截弹清掉敌弹",
-		"homing": false,
-		"bullet_speed_scale": 1.0,
-		"homing_turn_rate": 0.0,
-		"homing_lock_range": 0.0,
+		"seeker_interval": 0.0,
+		"seeker_speed_scale": 1.0,
+		"seeker_turn_rate": 0.0,
+		"seeker_lock_range": 0.0,
 		"hull": [Vector2(0, -32), Vector2(10, -7), Vector2(27, 13), Vector2(27, 21), Vector2(8, 15),
 			Vector2(7, 28), Vector2(-7, 28), Vector2(-8, 15), Vector2(-27, 21), Vector2(-27, 13), Vector2(-10, -7)],
 		"hull_color": Color(0.04, 0.42, 0.55, 1),
@@ -102,25 +102,24 @@ const SHIPS: Array[Dictionary] = [
 	{
 		"id": "homing",
 		"name": "游隼型",
-		"detail": "追踪弹 · 近距离自动锁定，代价是打不到远处",
-		"homing": true,
-		"bullet_speed_scale": 0.75,
-		# 转向速率是这台战机的**平衡支点**，不是手感参数：所有追踪弹共享同一个目标，
-		# 目标一死就全体改追下一个，转得越慢、弹群重新聚拢越久，后面出生的敌机才有机会
-		# 活到开火。初版取 5.0 时基准实测击毁率 94~95%、敌方弹幕被打到 0——等于把威胁
-		# 整个抹平。要压住的是"重新锁定的吞吐"，不是命中率（敌机朝玩家下来，追踪一定撞得上）。
-		"homing_turn_rate": 4.0,
-		# **这是这台战机的平衡支点，不是手感参数。**
-		# 追踪弹只在目标进入"距玩家多少像素"以内才锁定；更远的敌机不追，子弹照直飞。
-		# 为什么必须是射程而不是转向速率：实测把转向降到 1.0 仍无济于事（击毁率 92~96%），
-		# 因为满配每秒 148 发、在飞约 170 发，弹群密度太高，敌机附近总有弹。
-		# 而"敌机是朝玩家下来的"意味着只要射程不限，追踪一定撞得上——用命中率压不住它。
-		# 限制射程之后，上半屏的敌机不会被打，它们因此能活到开火，威胁就回来了。
-		# 代价同时也是这台战机的身份：**打不到远处的东西，只能近程拦阻**。
-		# 实测曲线（威胁基准，难度 30 的"到达/秒"，门槛 12）：
-		#   射程 70 → 15.17 · 110 → 15.33（达标）· 300 → 6.50 · 600 → 5.17 · 不限制 → ~0
-		# 断点很陡，所以这个数字是**平衡参数**而不是手感参数，改它必须重跑基准。
-		"homing_lock_range": 110.0,
+		"detail": "追踪导弹 · 主弹幕照直飞，另按节奏射出全屏追踪弹",
+		# **seeker_interval 是这台战机的平衡支点，不是手感参数**，改它必须重跑威胁基准。
+		#
+		# 走过的弯路值得完整记下来，因为它推翻了两版设计：
+		#   版一"每发子弹都追踪"：基准实测击毁率 96%、每架开火 0.00、到达/秒 0。
+		#   原因是结构性的——敌机朝玩家下来，只要射程不受限，追踪一定撞得上；而满配
+		#   每秒 148 发、在飞约 170 发，上半屏会被整个清空。
+		#   版二"只在 110 像素内锁定"：威胁回来了（15.33 达标），但 110 像素几乎贴着玩家，
+		#   **玩家根本看不见追踪**——真人试玩直接反馈"没有追踪效果"，等于功能没做出来。
+		#   量清边界后确认：射程 110 → 15.33 达标、150 → 11.67 掉线，**可见与有威胁直接冲突，
+		#   调参救不了**。
+		# 所以改成现在这样：**主弹幕照直（弹幕墙与拦截弹不受影响），追踪由少量、全屏锁定、
+		# 明显可辨的导弹提供**，用发射节奏控制总输出。可见性来自"导弹本身显眼"，而不是
+		# 来自放宽锁定范围。
+		"seeker_interval": 1.4,
+		"seeker_speed_scale": 0.7,
+		"seeker_turn_rate": 6.0,
+		"seeker_lock_range": 900.0,
 		"hull": [Vector2(0, -36), Vector2(7, -8), Vector2(20, 2), Vector2(31, 22), Vector2(12, 13),
 			Vector2(6, 28), Vector2(-6, 28), Vector2(-12, 13), Vector2(-31, 22), Vector2(-20, 2), Vector2(-7, -8)],
 		"hull_color": Color(0.06, 0.44, 0.38, 1),
@@ -248,6 +247,9 @@ var ship_id: String = "parallel"
 ## **不能**让每颗子弹各自遍历敌机——满配每秒 148 发，那会变成每秒几千次全表搜索。
 ## 这个写法与 Enemy 瞄准玩家时用 `get_first_node_in_group("player")` 是同一个套路。
 var _target_marker: Marker2D
+## 追踪导弹的发射冷却。用累加器而不是 Timer：它的周期完全由当前战机的数据决定，
+## 换战机时不必去 reschedule 一个节点，也不会在换局时留下未触发的回调。
+var _seeker_cooldown: float = 0.0
 
 func _ready() -> void:
 	# tuning 是 Resource 类型（项目约定不写 class_name，没法标成具体类型），所以
@@ -350,11 +352,8 @@ func selected_ship_index() -> int:
 			return index
 	return 0
 
-func ship_uses_homing() -> bool:
-	return bool(current_ship().get("homing", false))
-
-func ship_bullet_speed_scale() -> float:
-	return float(current_ship().get("bullet_speed_scale", 1.0))
+func ship_has_seekers() -> bool:
+	return float(current_ship().get("seeker_interval", 0.0)) > 0.0
 
 func set_ship(id: String) -> bool:
 	# 返回是否真的换成了：存档与测试都需要知道"这个 id 认不认"。
@@ -363,6 +362,9 @@ func set_ship(id: String) -> bool:
 			ship_id = id
 			_apply_ship()
 			_save_settings()
+			# 让开始界面同步：**按钮选中态与下面的说明文字都要跟着变**。
+			# 少了这一句，点击按钮只会改状态、界面纹丝不动——玩家会以为没点到。
+			hud.refresh_ship_choice(SHIPS, selected_ship_index())
 			return true
 	push_warning("忽略未知的战机 id：%s" % id)
 	return false
@@ -403,13 +405,13 @@ func _build_target_marker() -> void:
 
 func _update_target_marker() -> void:
 	# 每帧只做一次全表扫描，而不是让每颗追踪弹各自扫一遍。
-	# 只有当前战机用追踪弹时才需要——平行弹幕的子弹不看这个指示器。
-	if not ship_uses_homing():
+	# 只有带追踪导弹的战机才需要——平行弹幕的子弹不看这个指示器。
+	if not ship_has_seekers():
 		_release_target()
 		return
-	# 只在射程内锁定。射程是这台战机的**平衡支点**（理由见 SHIPS 里的注释）：
-	# 上半屏的敌机不被锁定，它们才有机会活到开火。
-	var lock_range: float = float(current_ship().get("homing_lock_range", 0.0))
+	# 追踪导弹是**全屏锁定**的：可见性由导弹本身显眼提供，而不是靠把锁定范围放宽
+	# （那条路已经证明走不通，见 SHIPS 里 seeker_interval 的说明）。
+	var lock_range: float = float(current_ship().get("seeker_lock_range", 0.0))
 	var nearest: Node2D = null
 	var best_distance: float = lock_range * lock_range
 	for enemy in get_tree().get_nodes_in_group("enemy"):
@@ -424,20 +426,53 @@ func _update_target_marker() -> void:
 		if not _target_marker.is_in_group("player_target"):
 			_target_marker.add_to_group("player_target")
 	else:
-		# 没有锁定目标时**必须把指示器摘出组**，让子弹照直飞。
-		# 第一版是把它摆到玩家正上方，结果两侧车道的子弹全都朝中间拐，弹幕从
-		# "一排平行车道"变成"一束"——那已经是另一套武器，基准量到的也就不再是追踪弹。
-		# 症状很好认：射程 70 与 110 量出逐位相同的结果，说明这个参数根本没参与。
+		# 没有目标时**必须把指示器摘出组**，让在飞的导弹不再拐向一个不存在的坐标。
+		# 第一版是把它摆到玩家正上方当替身，结果两侧车道的子弹全都朝中间拐、
+		# 弹幕从"一排平行车道"变成"一束"——症状是参数怎么改都量出逐位相同的结果。
 		_release_target()
+
+func _update_seeker_launcher(delta: float) -> void:
+	# 追踪导弹按固定节奏发射，**不是每发子弹都追踪**：满配每秒 13.5 次射击，若每发都
+	# 追踪，敌方弹幕会被打到 0（实测击毁率 96%、到达每秒 0）。节奏是这台战机的平衡支点。
+	var interval: float = float(current_ship().get("seeker_interval", 0.0))
+	if interval <= 0.0:
+		return
+	_seeker_cooldown -= delta
+	if _seeker_cooldown > 0.0:
+		return
+	# 没有目标就不发射：打空气既没有意义，也会让"射程/节奏"的实测变得不可解释。
+	if get_tree().get_first_node_in_group("player_target") == null:
+		return
+	_seeker_cooldown = interval
+	_spawn_seeker()
+
+func _spawn_seeker() -> void:
+	var bullet = PLAYER_BULLET_SCENE.instantiate()
+	bullet.speed = _bullet_speed * float(current_ship().get("seeker_speed_scale", 1.0))
+	bullet.homing = true
+	bullet.homing_turn_rate = float(current_ship().get("seeker_turn_rate", 6.0))
+	bullet.play_area_top = play_area_top
+	# 导弹是**单发目标**，刻意不继承穿透：继承之后一发能连杀 4 架（穿透×3 时），
+	# 实测把击毁率从 56% 推到 80%、威胁掉到 9.17。单发目标同时让"发射节奏 → 击杀数"
+	# 变成一比一，平衡才好预测。
+	bullet.pierce_left = 0
+	bullet.intercepts = _bullet_intercepts
+	# 让导弹一眼可辨：比主弹幕更大，并且**真的换掉弹体颜色**（不是用 modulate 乘法调色）。
+	# 可见性就是这么来的——不靠放宽锁定范围（那条路会让威胁归零）。
+	bullet.scale = Vector2.ONE * _bullet_scale * 1.6
+	bullet.body_color = Color(1.0, 0.62, 0.18, 1.0)
+	actors.add_child(bullet)
+	bullet.global_position = player.global_position + Vector2.UP * 34.0
 
 func _release_target() -> void:
 	if _target_marker != null and _target_marker.is_in_group("player_target"):
 		_target_marker.remove_from_group("player_target")
 
-func _physics_process(_delta: float) -> void:
+func _physics_process(delta: float) -> void:
 	if state != GameState.PLAYING:
 		return
 	_update_target_marker()
+	_update_seeker_launcher(delta)
 
 func _unhandled_input(event: InputEvent) -> void:
 	if event.is_action_pressed("restart") and not event.is_echo():
@@ -850,10 +885,11 @@ func _spawn_player_bullet(at: Vector2) -> void:
 	bullet.pierce_left = _bullet_pierce
 	bullet.intercepts = _bullet_intercepts
 	bullet.play_area_top = play_area_top
-	# 战机决定弹道行为：追踪弹会拐向目标指示器，平行弹幕保持竖直。
-	bullet.homing = ship_uses_homing()
-	bullet.homing_turn_rate = float(current_ship().get("homing_turn_rate", 0.0))
-	bullet.speed = _bullet_speed * ship_bullet_speed_scale()
+	# 主弹幕**一律照直飞**：弹幕墙与拦截弹都依赖它保持竖直，追踪是另一路武器
+	# （见 _spawn_seeker）。把追踪做进主弹幕会让满配每秒 13.5 次射击全部命中，
+	# 敌方弹幕会被打到 0。
+	bullet.homing = false
+	bullet.speed = _bullet_speed
 	# direction 保持默认的正上方，弹道竖直，所以图形旋转量恒为 0。
 	# 弹体增幅：直接缩放节点，碰撞形状与图形一起变大，因此“更好命中”是真的生效。
 	bullet.scale = Vector2.ONE * _bullet_scale

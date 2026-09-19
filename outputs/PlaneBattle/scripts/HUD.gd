@@ -291,6 +291,13 @@ func _unhandled_input(event: InputEvent) -> void:
 			upgrade_chosen.emit(index)
 			return
 
+func refresh_ship_choice(ships: Array[Dictionary], selected: int) -> void:
+	# 只在开始界面**可见时**才刷新：换战机也可能发生在战斗中（测试夹具、以后可能的
+	# 机库界面），那时把开始界面的按钮凭空显示到战斗画面上就成了另一个 bug。
+	if not ship_caption.visible:
+		return
+	show_ship_choice(ships, selected)
+
 func _set_message_visible(value: bool) -> void:
 	overlay.visible = value
 	message_panel.visible = value

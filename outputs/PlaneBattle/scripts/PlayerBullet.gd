@@ -18,12 +18,18 @@ extends Area2D
 ## 每秒最多转多少弧度。留上限是为了让追踪**不是瞬间锁定**：没有上限的话子弹出膛当帧
 ## 就会折成一条指向目标的直线，看起来像瞬移，也丢掉了"慢速弹"这个代价。
 @export var homing_turn_rate: float = 5.0
+## 弹体颜色。主弹幕是青色；追踪导弹由 Main 设成暖色，好让玩家一眼认出来。
+## **用颜色属性而不是 modulate**：modulate 是乘法，青色弹体乘橙色只会得到浑浊的绿，
+## 第一版就是这么写的，结果导弹在截图里几乎看不见——"看得见"这件事得用真的颜色去保证。
+@export var body_color: Color = Color(0.02, 0.55, 0.67, 1)
 
 var spent: bool = false
 
 func _ready() -> void:
 	add_to_group("player_bullet")
 	area_entered.connect(_on_area_entered)
+	# 颜色在 _ready 里应用：Main 按项目约定在 add_child 之前写好导出值。
+	($Visual as Polygon2D).color = body_color
 	# 机身图形朝上，所以按飞行方向旋转；direction 为正上方时旋转量恰好为 0。
 	rotation = direction.angle() + PI * 0.5
 

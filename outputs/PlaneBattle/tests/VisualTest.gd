@@ -85,6 +85,26 @@ func _run() -> void:
 	# 等特效自行消散，免得它们跟着出现在后面几张截图里。
 	await create_timer(0.6).timeout
 
+	# 追踪导弹：切到游隼型，摆几架远处的敌机，等它按节奏发几轮导弹再截图。
+	# **这张的存在理由**：上一版把锁定射程压到 110 像素来保平衡，数据上完全达标，
+	# 但那个距离几乎贴着玩家、**玩家根本看不见追踪**（真人试玩直接反馈"没有追踪效果"）。
+	# 所以"追踪看得见"必须自己有一张图，而不是只靠平衡数字。
+	game.set_ship("homing")
+	for spot in [Vector2(120, 210), Vector2(360, 300), Vector2(240, 170)]:
+		var target_enemy = load("res://scenes/Enemy.tscn").instantiate()
+		target_enemy.position = spot
+		target_enemy.speed = 0.0
+		game.actors.add_child(target_enemy)
+	game._seeker_cooldown = 0.0
+	# 0.5 秒后截图：导弹正好在飞行途中。太晚的话它已经命中目标消失，图上什么都看不到
+	# ——第一版就是这么截的，看起来像"追踪没做出来"，而其实是拍晚了。
+	await create_timer(0.5).timeout
+	await capture("res://../homing-preview.png")
+	# 收尾：换回标准型并清场，免得这些敌机跟着出现在 Boss 截图里。
+	game.set_ship("parallel")
+	game._clear_entities()
+	await create_timer(0.2).timeout
+
 	# Boss 战：走真实登场路径，并手动把它推到位，好让截图里能看清机体与顶部血条。
 	game.boss_pending = true
 	game._on_enemy_timer_timeout()

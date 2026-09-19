@@ -245,7 +245,8 @@ func _run() -> void:
 	var ship_ids := {}
 	var ships_well_formed := true
 	for entry in game.SHIPS:
-		for key in ["id", "name", "detail", "homing", "bullet_speed_scale", "hull",
+		for key in ["id", "name", "detail", "seeker_interval", "seeker_speed_scale",
+				"seeker_turn_rate", "seeker_lock_range", "hull",
 				"hull_color", "cockpit_color", "engine_color"]:
 			if not entry.has(key):
 				ships_well_formed = false
@@ -253,7 +254,7 @@ func _run() -> void:
 	check(ships_well_formed, "每台战机都带齐 id/名称/说明/武器行为/外形与配色")
 	check(ship_ids.size() == game.SHIPS.size(), "战机 id 互不重复")
 	check(game.ship_id == "parallel", "默认战机是平行弹幕")
-	check(not game.ship_uses_homing(), "默认战机不使用追踪弹")
+	check(not game.ship_has_seekers(), "默认战机不发射追踪导弹")
 
 	# 开始界面：按钮数量、选中态、说明文字都要与实际数据一致。
 	check(game.hud.ship_buttons.size() >= game.SHIPS.size(), "开始界面预留了足够的战机按钮")
@@ -286,7 +287,7 @@ func _run() -> void:
 	# 换战机：换外形与配色、记住选择、未知 id 被拒绝。
 	var default_hull_color: Color = game.player.hull.color
 	check(game.set_ship("homing"), "可以切到追踪弹战机")
-	check(game.ship_id == "homing" and game.ship_uses_homing(), "切换后武器行为跟着变")
+	check(game.ship_id == "homing" and game.ship_has_seekers(), "切换后武器行为跟着变")
 	check(game.player.hull.color != default_hull_color, "切换后玩家外形配色跟着变")
 	check(
 		game.player.hull.polygon.size() == (game.SHIPS[1]["hull"] as Array).size(),
@@ -294,6 +295,16 @@ func _run() -> void:
 	)
 	check(not game.set_ship("not_a_ship"), "未知战机 id 会被拒绝")
 	check(game.ship_id == "homing", "被拒绝的切换不会改动当前战机")
+	# 界面的说明文字必须跟着变。这条断言守的是一个真实发生过的缺陷：点击按钮只改了
+	# 状态、`ship_detail` 纹丝不动（它只在 show_start() 里赋值过），玩家会以为没点到。
+	check(
+		game.hud.ship_detail.text == str(game.SHIPS[game.selected_ship_index()]["detail"]),
+		"换战机后开始界面的说明文字立刻跟着更新"
+	)
+	check(
+		game.hud.ship_buttons[game.selected_ship_index()].button_pressed,
+		"换战机后选中态也立刻跟着更新"
+	)
 	game.select_ship(99)
 	check(game.ship_id == "homing", "越界的按钮下标不会改动当前战机")
 	# 选择要记住：否则每局开局都要重选一遍。
@@ -385,62 +396,85 @@ func _run() -> void:
 	check(get_nodes_in_group("player_bullet").size() >= 2, "hold shoot repeats after cooldown")
 	await clear_arena()
 
-	# --- 追踪弹（游隼型） ---
-	# 目标由 Main 每帧算一次、挂在一个共享指示器上，子弹只做 O(1) 的组查询。
-	# 锁定状态用"指示器在不在组里"表示：**没有锁定就必须摘出组**，这样子弹照直飞。
-	# 第一版是把指示器摆到玩家正上方当替身，结果两侧车道的子弹全朝中间拐、
-	# 弹幕从"一排平行车道"变成"一束"——症状是射程参数怎么改都量出逐位相同的结果。
+	# --- 游隼型的追踪导弹 ---
+	# **主弹幕一律照直飞，追踪是另一路武器。** 这是被数据逼出来的结构：
+	# 若每发子弹都追踪，满配每秒 13.5 次射击会全部命中，实测把敌方弹幕打到 0；
+	# 而"只在近距离锁定"虽然保住了威胁，却小到玩家看不见（真人试玩反馈"没有追踪效果"）。
+	# 量清边界确认两者直接冲突（射程 110 → 15.33 达标、150 → 11.67 掉线），
+	# 于是改成：主弹幕照直 + 少量、全屏锁定、明显可辨的导弹，用发射节奏控平衡。
 	game.set_ship("homing")
 	game.player.position = Vector2(240, 650)
-	# 射程外的敌机不该被锁定。
-	var far_enemy = make_enemy(Vector2(240, 200))
-	game._physics_process(0.0)
-	check(
-		game.get_tree().get_first_node_in_group("player_target") == null,
-		"射程外的敌机不会被锁定（子弹因此照直飞、仍是一排平行车道）"
-	)
-	far_enemy.take_hit()
-	await settle(2)
-	# 射程内、且偏在一侧，才能同时验证"锁定"与"真的会拐弯"。
-	var chaser = make_enemy(Vector2(200, 600))
+	var target_enemy = make_enemy(Vector2(200, 300))
 	game._physics_process(0.0)
 	var marker: Node2D = game.get_tree().get_first_node_in_group("player_target")
 	check(
-		marker != null and marker.global_position.distance_to(chaser.global_position) < 1.0,
-		"射程内的敌机会被锁定，指示器指向它"
+		marker != null and marker.global_position.distance_to(target_enemy.global_position) < 1.0,
+		"追踪导弹是全屏锁定的：远处的敌机也会被指示器锁定"
 	)
-
-	# 追踪弹真的会拐弯：目标在左侧，走几帧后方向必须偏离正上方。
+	# 主弹幕必须仍然是直的，否则弹幕墙与拦截弹都会被破坏。
+	# 注意追踪导弹和主弹幕在同一个组里，所以这里**按 homing 标志区分**，不能整组断言。
 	game._on_player_shoot_requested(game.player.position)
 	await settle(2)
-	var homing_bullets: Array = get_nodes_in_group("player_bullet")
-	var homing_ok := true
-	for entity in homing_bullets:
-		if not entity.homing:
-			homing_ok = false
-	check(homing_ok and not homing_bullets.is_empty(), "追踪弹战机发射的子弹带追踪标志")
-	if not homing_bullets.is_empty():
-		var tracked = homing_bullets[0]
-		var initial_direction: Vector2 = tracked.direction
-		# 目标在左侧，子弹应当朝左偏。
-		var before_angle: float = tracked.direction.angle()
-		await settle(10)
+	var stream_ok := true
+	var stream_count: int = 0
+	for entity in get_nodes_in_group("player_bullet"):
+		if entity.homing:
+			continue
+		stream_count += 1
+		if not entity.direction.is_equal_approx(Vector2.UP):
+			stream_ok = false
+	check(stream_ok and stream_count > 0, "游隼型的主弹幕照直飞，不追踪（弹幕墙与拦截弹因此不受影响）")
+
+	# 追踪导弹：按节奏单独发射，带追踪标志、并且真的会拐弯。
+	# 用"调用前后各数一次"而不是绝对数量：await 期间引擎自己也会推进物理帧、
+	# 可能已经发过几发，写死数量会莫名其妙地失败。
+	var before_seekers: int = 0
+	for entity in get_nodes_in_group("player_bullet"):
+		if entity.homing:
+			before_seekers += 1
+	game._seeker_cooldown = 0.0
+	game._physics_process(0.016)
+	var after_seekers: int = 0
+	for entity in get_nodes_in_group("player_bullet"):
+		if entity.homing:
+			after_seekers += 1
+	check(after_seekers == before_seekers + 1, "追踪导弹按节奏发射（一次只发一发，不是每发主弹幕都追踪）")
+	var seeker = null
+	for entity in get_nodes_in_group("player_bullet"):
+		if entity.homing:
+			seeker = entity
+	if seeker != null:
+		var before_angle: float = seeker.direction.angle()
+		await settle(12)
 		check(
-			tracked.direction.angle() != before_angle or tracked.direction != initial_direction,
-			"追踪弹在飞行中改变了方向（不是一条直线飞到底）"
+			seeker.direction.angle() != before_angle,
+			"追踪导弹在飞行中改变了方向（玩家能看见它在拐弯）"
 		)
+		check(seeker.scale.x > 1.0, "追踪导弹比主弹幕更大，玩家一眼能认出来")
+	# 节奏由数据决定：冷却未走完时不再发射。
+	game._seeker_cooldown = 99.0
+	var guarded_before: int = get_nodes_in_group("player_bullet").size()
+	game._physics_process(0.016)
+	check(
+		get_nodes_in_group("player_bullet").size() == guarded_before,
+		"冷却没走完时不会额外发射追踪导弹（节奏就是平衡支点）"
+	)
 	await clear_arena()
 
-	# 平行弹幕战机必须与旧行为逐值一致：方向恒为正上方。
+	# 平行弹幕战机不该有任何追踪导弹。
 	game.set_ship("parallel")
-	game._on_player_shoot_requested(game.player.position)
-	await settle(2)
-	var straight_bullets: Array = get_nodes_in_group("player_bullet")
-	var straight_ok: bool = not straight_bullets.is_empty()
-	for entity in straight_bullets:
-		if entity.homing or not entity.direction.is_equal_approx(Vector2.UP):
-			straight_ok = false
-	check(straight_ok, "平行弹幕战机的子弹不追踪，方向恒为正上方（与旧行为一致）")
+	check(not game.ship_has_seekers(), "标准型没有追踪导弹")
+	game._seeker_cooldown = 0.0
+	game._physics_process(0.016)
+	var plain_seekers: int = 0
+	for entity in get_nodes_in_group("player_bullet"):
+		if entity.homing:
+			plain_seekers += 1
+	check(plain_seekers == 0, "标准型不会发射追踪导弹")
+	check(
+		game.get_tree().get_first_node_in_group("player_target") == null,
+		"标准型会释放目标指示器（没有东西需要它）"
+	)
 	await clear_arena()
 	# 这一段里的敌机是夹具（为了让指示器有目标、也为了腾地方），但它们走的是真实的
 	# 击毁路径、会加分。后面的计分断言要的是干净起点，所以这里显式复位——
