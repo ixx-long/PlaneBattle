@@ -14,9 +14,13 @@ const CHOICE_ACTIONS: Array[String] = ["choice_1", "choice_2", "choice_3", "choi
 
 ## 受伤红闪与得分脉冲的时长与强度。
 @export var damage_flash_duration: float = 0.30
-@export var damage_flash_alpha: float = 0.38
+## 受伤红闪的峰值透明度。0.38 时整屏泛红偏重，会短暂盖住敌机弹道——而受伤那一下
+## 恰恰是玩家最需要看清弹幕的时刻。调到 0.26：依然一眼可见，但不再遮住画面。
+@export var damage_flash_alpha: float = 0.26
 @export var score_pulse_duration: float = 0.18
 @export var score_pulse_scale: float = 1.18
+## 升级面板底部留在最后一张卡片下面的空白。
+@export var panel_bottom_padding: float = 26.0
 
 @onready var score_label: Label = $ScoreLabel
 @onready var combo_label: Label = $ComboLabel
@@ -159,6 +163,12 @@ func show_level_up(current_level: int, offers: Array[Dictionary]) -> void:
 		card.disabled = not usable
 		if usable:
 			card.text = "%d. %s　%s" % [index + 1, offers[index]["name"], offers[index]["detail"]]
+	# 面板高度按**实际给到的张数**收缩。基础是 4 选 1，而面板原本固定到 y=690，
+	# 于是最常见的 4 张卡下面会留下约 120 像素空白——看着像界面没画完。
+	# 这里直接取最后一张可见卡片的下沿（而不是把卡片几何抄一遍），
+	# 好处是以后改卡片高度或间距，面板会自动跟随，不会两处对不上。
+	var shown_cards: int = clampi(offers.size(), 1, upgrade_cards.size())
+	level_up_panel.offset_bottom = upgrade_cards[shown_cards - 1].offset_bottom + panel_bottom_padding
 
 func hide_level_up() -> void:
 	level_up_overlay.visible = false

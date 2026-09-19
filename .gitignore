@@ -32,6 +32,11 @@ __pycache__/
 # --- 工具自身的状态目录（不是本项目的源码）---
 .workbuddy-ai/
 
+# --- 写提交信息用的临时文件 ---
+# 习惯用 `git commit -F <文件>` 写多行信息，而 `git add -A` 会顺手把它一起暂存
+# （已经犯过一次，只好 amend 补救）。列在这里，以后再犯也不会被提交。
+_commit_msg*.txt
+
 # --- 由 tools/build_deliverables.py 生成的交付物与验证日志 ---
 # 这些是**产物而不是源码**：文档由 tools/document_sections.py 加逐字嵌入的源码生成，
 # ZIP 由工程目录打包，两者跑一遍流水线就能重建。不提交有两个具体理由：

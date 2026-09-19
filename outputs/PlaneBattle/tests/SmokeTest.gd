@@ -174,6 +174,70 @@ func _run() -> void:
 	check(best_label.get_minimum_size().x <= best_label.size.x, "最高分文字不超出矩形宽度")
 	check(status_label.position.x + status_label.size.x <= best_label.position.x, "状态行与最高分不重叠")
 	check(message_label.get_minimum_size().y <= message_label.size.y, "开始界面文案不超出矩形高度")
+
+	# --- 视觉收尾的回归守卫 ---
+	# 这些项原本是“看着不对但没人管”的观感问题。既然改了，就用断言钉住，
+	# 否则下次动布局或改场景时很容易又退回去，而这类退化不会有任何报错。
+	# 1) 升级面板必须紧贴最后一张卡。固定高度曾经让最常见的 4 选 1 底部空出约 120 像素。
+	var four_offers: Array[Dictionary] = []
+	var five_offers: Array[Dictionary] = []
+	for index in range(game.UPGRADES.size()):
+		if index < 4:
+			four_offers.append(game.UPGRADES[index])
+		if index < 5:
+			five_offers.append(game.UPGRADES[index])
+	var level_up_panel: Panel = game.hud.level_up_panel
+	game.hud.show_level_up(3, four_offers)
+	var gap_four: float = level_up_panel.offset_bottom - game.hud.upgrade_cards[3].offset_bottom
+	check(gap_four > 0.0 and gap_four < 40.0, "4 选 1 时升级面板紧贴最后一张卡，不留大块空白")
+	game.hud.show_level_up(3, five_offers)
+	var gap_five: float = level_up_panel.offset_bottom - game.hud.upgrade_cards[4].offset_bottom
+	check(gap_five > 0.0 and gap_five < 40.0, "5 选 1 时面板同样紧贴最后一张卡")
+	check(
+		game.hud.upgrade_cards[4].offset_bottom < level_up_panel.offset_bottom,
+		"第 5 张卡不越出面板下沿"
+	)
+	game.hud.hide_level_up()
+
+	# 2) Boss 轮廓不能是一条平顶直线，且机体顶边与顶部血条之间要留出空隙。
+	# 原来的 Hull 顶边是 (44,-40) → (-44,-40) 一条 88 像素的水平线，看着像块板；
+	# 而 boss_hold_y=150 时机体顶边正好顶到血条上。
+	var boss_probe = load("res://scenes/Boss.tscn").instantiate()
+	var hull: Polygon2D = boss_probe.get_node("Visual/Hull")
+	var hull_top: float = 0.0
+	var top_levels := {}
+	for point in hull.polygon:
+		hull_top = minf(hull_top, point.y)
+		if point.y < -20.0:
+			top_levels[snappedf(point.y, 0.1)] = true
+	check(top_levels.size() >= 3, "Boss 顶部轮廓不是平直横线（至少有三种不同高度）")
+	check(
+		game.tuning.boss_hold_y + hull_top > game.hud.boss_bar.offset_bottom + 15.0,
+		"Boss 机体顶边与顶部血条之间留有空隙"
+	)
+	boss_probe.free()
+
+	# 3) 受伤红闪不能重到盖住画面——受伤那一下恰恰是最需要看清弹幕的时刻。
+	check(
+		game.hud.damage_flash_alpha <= 0.30,
+		"受伤红闪峰值不超过 0.30，不至于遮住正在飞来的弹幕"
+	)
+
+	# 4) 爆炸要有存在感。
+	var explosion_probe = load("res://scenes/Explosion.tscn").instantiate()
+	check(explosion_probe.amount >= 18, "爆炸粒子数量足够，不会一眼看不见")
+	check(explosion_probe.scale_amount_max >= 2.0, "爆炸粒子尺寸足够大")
+	explosion_probe.free()
+
+	# 5) 背景要有层次：竖向渐变 + 多级航道线，而不是一块纯色配三条线。
+	# 全部由内置资源程序生成，不引入任何图片文件。
+	var background = game.get_node("Background")
+	check(
+		background is TextureRect and background.texture != null,
+		"背景是竖向渐变贴图，而不是一块纯色"
+	)
+	check(game.get_node("FlightLines").get_child_count() >= 5, "航道线有层次（不少于 5 条）")
+
 	check(game.hud.start_button.visible and not game.player.active, "start menu and inactive player")
 	check(game.enemy_timer.is_stopped(), "no spawns before start")
 	for action in ["move_left", "move_right", "move_up", "move_down", "shoot", "restart"]:
