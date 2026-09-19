@@ -13,7 +13,7 @@ extends SceneTree
 ## 运行：godot --headless --path . --script res://tests/ThreatTest.gd
 
 ## 看门狗上限，必须明显小于 validate_project 的 90 秒子进程超时。
-const WATCHDOG_SECONDS: float = 75.0
+const WATCHDOG_SECONDS: float = 110.0
 ## 每个难度档位的测量时长。必须小于 level_step_seconds，否则测量途中难度会跳档。
 const MEASURE_SECONDS: float = 6.0
 ## 玩家固定在屏幕下方且全程不动：本项量的是“火力有没有漏过来”，不是“玩家会不会躲”。
@@ -157,31 +157,37 @@ func _run() -> void:
 	var bullets_per_shot: int = game._bullet_count + game._wing_pairs * 2
 	var shot_interval: float = game.player.shoot_cooldown
 	var summary_parts: Array[String] = []
-	var results: Array[Dictionary] = []
+	## 每台战机各跑一遍全部难度档。战机把平衡面翻了几倍，靠手调是守不住的——
+	## 所以把"每台战机都必须达标"变成断言：任何一台把威胁抹平，构建就失败。
+	var per_ship_late: Array[Dictionary] = []
 
-	for target in PROBE_LEVELS:
-		var result: Dictionary = await _measure(game, target)
-		results.append(result)
-		var shots: int = int(result["shots"])
-		var arrived: int = int(result["arrived"])
-		var spawned: int = int(result["spawned"])
-		var kills: int = int(result["kills"])
-		var rate: float = 0.0 if shots <= 0 else float(arrived) / float(shots)
-		# “每架敌机开了几枪”是这套测量的核心诊断量：玩家火力如果能在敌机开火之前
-		# 就把它打掉，那么敌弹总量会被直接掐死在源头——这时把密度调多高都没用。
-		var shots_per_enemy: float = 0.0 if spawned <= 0 else float(shots) / float(spawned)
-		var kill_ratio: float = 0.0 if spawned <= 0 else float(kills) / float(spawned)
-		print(
-			"THREAT: 难度=%d 敌机=%d 击毁=%.0f%% 每架开火=%.2f 敌弹=%d 到达=%d 通过率=%.1f%% 到达/秒=%.2f 固定靶被命中=%d"
-			% [int(result["difficulty"]), spawned, kill_ratio * 100.0, shots_per_enemy,
-				shots, arrived, rate * 100.0,
-				float(arrived) / MEASURE_SECONDS, int(result["hits"])]
-		)
-		summary_parts.append("%d:%.1f%%" % [int(result["difficulty"]), rate * 100.0])
-		# 前提断言：敌人确实开火了、也有弹真正活过一帧。少了这两条，
-		# 下面的通过率会因为分母是 0 而“看起来是 0%”，把故障伪装成结论。
-		check(shots > 0, "难度 %d 的敌机确实开火了（通过率的分母有效）" % target)
-		check(int(result["lived"]) > 0, "难度 %d 有敌弹真正存在于场上" % target)
+	for ship in game.SHIPS:
+		game.set_ship(ship["id"])
+		var ship_results: Array[Dictionary] = []
+		for target in PROBE_LEVELS:
+			var result: Dictionary = await _measure(game, target)
+			ship_results.append(result)
+			var shots: int = int(result["shots"])
+			var arrived: int = int(result["arrived"])
+			var spawned: int = int(result["spawned"])
+			var kills: int = int(result["kills"])
+			var rate: float = 0.0 if shots <= 0 else float(arrived) / float(shots)
+			# “每架敌机开了几枪”是这套测量的核心诊断量：玩家火力如果能在敌机开火之前
+			# 就把它打掉，那么敌弹总量会被直接掐死在源头——这时把密度调多高都没用。
+			var shots_per_enemy: float = 0.0 if spawned <= 0 else float(shots) / float(spawned)
+			var kill_ratio: float = 0.0 if spawned <= 0 else float(kills) / float(spawned)
+			print(
+				"THREAT: 战机=%s 难度=%d 敌机=%d 击毁=%.0f%% 每架开火=%.2f 敌弹=%d 到达=%d 通过率=%.1f%% 到达/秒=%.2f 固定靶被命中=%d"
+				% [ship["name"], int(result["difficulty"]), spawned, kill_ratio * 100.0, shots_per_enemy,
+					shots, arrived, rate * 100.0,
+					float(arrived) / MEASURE_SECONDS, int(result["hits"])]
+			)
+			summary_parts.append("%s@%d:%.1f%%" % [ship["id"], int(result["difficulty"]), rate * 100.0])
+			# 前提断言：敌人确实开火了、也有弹真正活过一帧。少了这两条，
+			# 下面的通过率会因为分母是 0 而“看起来是 0%”，把故障伪装成结论。
+			check(shots > 0, "%s 在难度 %d 确实面对了敌方火力（通过率的分母有效）" % [ship["name"], target])
+			check(int(result["lived"]) > 0, "%s 在难度 %d 有敌弹真正存在于场上" % [ship["name"], target])
+		per_ship_late.append({"name": ship["name"], "result": ship_results[ship_results.size() - 1]})
 
 	print(
 		"THREAT-SUMMARY: 弹幕=%d发/次 冷却=%.3fs 通过率 %s"
@@ -192,19 +198,22 @@ func _run() -> void:
 	# 它防的是那个已经在真人身上发生过的缺陷：玩家火力把敌机在开火之前就打死，
 	# 敌方总输出被抹平，于是“再怎么调密度都没有威胁”。改前实测每架 0.69 发、
 	# 每秒 3.33 发到达；补上齐射后是 2.1~3.3 发/架、12.2~17.5 发/秒。
-	var late: Dictionary = results[results.size() - 1]
-	var late_arrivals_per_second: float = float(late["arrived"]) / MEASURE_SECONDS
-	var late_shots_per_enemy: float = float(late["shots"]) / maxf(float(late["spawned"]), 1.0)
-	check(
-		late_shots_per_enemy >= MIN_SHOTS_PER_ENEMY,
-		"最高难度下每架敌机的开火量不低于 %.1f 发（实测 %.2f）"
-			% [MIN_SHOTS_PER_ENEMY, late_shots_per_enemy]
-	)
-	check(
-		late_arrivals_per_second >= MIN_ARRIVALS_PER_SECOND,
-		"最高难度下每秒到达玩家面前的敌弹不低于 %.1f 发（实测 %.2f）"
-			% [MIN_ARRIVALS_PER_SECOND, late_arrivals_per_second]
-	)
+	# **每台战机都必须达标**——这是本基准在"开局选战机"之后新增的职责：
+	# 形态把平衡面翻了几倍，靠手调守不住，所以把它变成构建级断言。
+	for entry in per_ship_late:
+		var late: Dictionary = entry["result"]
+		var late_arrivals_per_second: float = float(late["arrived"]) / MEASURE_SECONDS
+		var late_shots_per_enemy: float = float(late["shots"]) / maxf(float(late["spawned"]), 1.0)
+		check(
+			late_shots_per_enemy >= MIN_SHOTS_PER_ENEMY,
+			"%s：最高难度下每架敌机的开火量不低于 %.1f 发（实测 %.2f）"
+				% [entry["name"], MIN_SHOTS_PER_ENEMY, late_shots_per_enemy]
+		)
+		check(
+			late_arrivals_per_second >= MIN_ARRIVALS_PER_SECOND,
+			"%s：最高难度下每秒到达玩家面前的敌弹不低于 %.1f 发（实测 %.2f）"
+				% [entry["name"], MIN_ARRIVALS_PER_SECOND, late_arrivals_per_second]
+		)
 
 	# 退出前把音频停干净并放开流引用，否则退出时会偶发 "resources still in use at exit"。
 	# 先显式清场：最后一次测量留下的敌机与敌弹数量不少（满配时上百个），只靠

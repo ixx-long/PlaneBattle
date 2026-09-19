@@ -238,6 +238,74 @@ func _run() -> void:
 	)
 	check(game.get_node("FlightLines").get_child_count() >= 5, "航道线有层次（不少于 5 条）")
 
+	# --- 战机选择 ---
+	# 战机是**开局选定**的形态，不进抽卡池：不会稀释 16 项能力的抽取，也不会出现
+	# "什么都拿一点"导致覆盖形状与输出同时膨胀。
+	check(game.SHIPS.size() >= 2, "至少有两台可选战机")
+	var ship_ids := {}
+	var ships_well_formed := true
+	for entry in game.SHIPS:
+		for key in ["id", "name", "detail", "homing", "bullet_speed_scale", "hull",
+				"hull_color", "cockpit_color", "engine_color"]:
+			if not entry.has(key):
+				ships_well_formed = false
+		ship_ids[entry["id"]] = true
+	check(ships_well_formed, "每台战机都带齐 id/名称/说明/武器行为/外形与配色")
+	check(ship_ids.size() == game.SHIPS.size(), "战机 id 互不重复")
+	check(game.ship_id == "parallel", "默认战机是平行弹幕")
+	check(not game.ship_uses_homing(), "默认战机不使用追踪弹")
+
+	# 开始界面：按钮数量、选中态、说明文字都要与实际数据一致。
+	check(game.hud.ship_buttons.size() >= game.SHIPS.size(), "开始界面预留了足够的战机按钮")
+	var visible_ship_buttons: int = 0
+	for button in game.hud.ship_buttons:
+		if button.visible:
+			visible_ship_buttons += 1
+	check(visible_ship_buttons == game.SHIPS.size(), "只显示实际存在的战机按钮，不多不少")
+	var selected_button_pressed: bool = game.hud.ship_buttons[game.selected_ship_index()].button_pressed
+	check(selected_button_pressed, "当前战机的按钮处于按下状态（ButtonGroup 保证只按下一个）")
+	check(
+		game.hud.ship_detail.text == str(game.SHIPS[game.selected_ship_index()]["detail"]),
+		"开始界面显示的是当前战机的说明"
+	)
+	# 按钮按实际台数动态排开：写死三档坐标的话，加第四台时新按钮会叠在旧的上面。
+	var ships_laid_out := true
+	for index in range(game.SHIPS.size()):
+		var button: Button = game.hud.ship_buttons[index]
+		if button.offset_left < game.hud.message_panel.offset_left \
+				or button.offset_right > game.hud.message_panel.offset_right \
+				or button.offset_top < game.hud.message_panel.offset_top \
+				or button.offset_bottom > game.hud.message_panel.offset_bottom:
+			ships_laid_out = false
+		if index > 0:
+			var previous: Button = game.hud.ship_buttons[index - 1]
+			if button.offset_left < previous.offset_right:
+				ships_laid_out = false
+	check(ships_laid_out, "战机按钮都在面板内且互不重叠")
+
+	# 换战机：换外形与配色、记住选择、未知 id 被拒绝。
+	var default_hull_color: Color = game.player.hull.color
+	check(game.set_ship("homing"), "可以切到追踪弹战机")
+	check(game.ship_id == "homing" and game.ship_uses_homing(), "切换后武器行为跟着变")
+	check(game.player.hull.color != default_hull_color, "切换后玩家外形配色跟着变")
+	check(
+		game.player.hull.polygon.size() == (game.SHIPS[1]["hull"] as Array).size(),
+		"切换后玩家的机体轮廓换成了该战机的形状"
+	)
+	check(not game.set_ship("not_a_ship"), "未知战机 id 会被拒绝")
+	check(game.ship_id == "homing", "被拒绝的切换不会改动当前战机")
+	game.select_ship(99)
+	check(game.ship_id == "homing", "越界的按钮下标不会改动当前战机")
+	# 选择要记住：否则每局开局都要重选一遍。
+	var ship_probe = load("res://scenes/Main.tscn").instantiate()
+	root.add_child(ship_probe)
+	await settle()
+	check(ship_probe.ship_id == "homing", "新实例从磁盘读回上次选的战机")
+	ship_probe.queue_free()
+	await settle()
+	check(game.set_ship("parallel"), "切回默认战机")
+	check(game.player.hull.color == default_hull_color, "切回后配色恢复")
+
 	check(game.hud.start_button.visible and not game.player.active, "start menu and inactive player")
 	check(game.enemy_timer.is_stopped(), "no spawns before start")
 	for action in ["move_left", "move_right", "move_up", "move_down", "shoot", "restart", "focus", "pause"]:
@@ -316,6 +384,70 @@ func _run() -> void:
 	Input.action_release("shoot")
 	check(get_nodes_in_group("player_bullet").size() >= 2, "hold shoot repeats after cooldown")
 	await clear_arena()
+
+	# --- 追踪弹（游隼型） ---
+	# 目标由 Main 每帧算一次、挂在一个共享指示器上，子弹只做 O(1) 的组查询。
+	# 锁定状态用"指示器在不在组里"表示：**没有锁定就必须摘出组**，这样子弹照直飞。
+	# 第一版是把指示器摆到玩家正上方当替身，结果两侧车道的子弹全朝中间拐、
+	# 弹幕从"一排平行车道"变成"一束"——症状是射程参数怎么改都量出逐位相同的结果。
+	game.set_ship("homing")
+	game.player.position = Vector2(240, 650)
+	# 射程外的敌机不该被锁定。
+	var far_enemy = make_enemy(Vector2(240, 200))
+	game._physics_process(0.0)
+	check(
+		game.get_tree().get_first_node_in_group("player_target") == null,
+		"射程外的敌机不会被锁定（子弹因此照直飞、仍是一排平行车道）"
+	)
+	far_enemy.take_hit()
+	await settle(2)
+	# 射程内、且偏在一侧，才能同时验证"锁定"与"真的会拐弯"。
+	var chaser = make_enemy(Vector2(200, 600))
+	game._physics_process(0.0)
+	var marker: Node2D = game.get_tree().get_first_node_in_group("player_target")
+	check(
+		marker != null and marker.global_position.distance_to(chaser.global_position) < 1.0,
+		"射程内的敌机会被锁定，指示器指向它"
+	)
+
+	# 追踪弹真的会拐弯：目标在左侧，走几帧后方向必须偏离正上方。
+	game._on_player_shoot_requested(game.player.position)
+	await settle(2)
+	var homing_bullets: Array = get_nodes_in_group("player_bullet")
+	var homing_ok := true
+	for entity in homing_bullets:
+		if not entity.homing:
+			homing_ok = false
+	check(homing_ok and not homing_bullets.is_empty(), "追踪弹战机发射的子弹带追踪标志")
+	if not homing_bullets.is_empty():
+		var tracked = homing_bullets[0]
+		var initial_direction: Vector2 = tracked.direction
+		# 目标在左侧，子弹应当朝左偏。
+		var before_angle: float = tracked.direction.angle()
+		await settle(10)
+		check(
+			tracked.direction.angle() != before_angle or tracked.direction != initial_direction,
+			"追踪弹在飞行中改变了方向（不是一条直线飞到底）"
+		)
+	await clear_arena()
+
+	# 平行弹幕战机必须与旧行为逐值一致：方向恒为正上方。
+	game.set_ship("parallel")
+	game._on_player_shoot_requested(game.player.position)
+	await settle(2)
+	var straight_bullets: Array = get_nodes_in_group("player_bullet")
+	var straight_ok: bool = not straight_bullets.is_empty()
+	for entity in straight_bullets:
+		if entity.homing or not entity.direction.is_equal_approx(Vector2.UP):
+			straight_ok = false
+	check(straight_ok, "平行弹幕战机的子弹不追踪，方向恒为正上方（与旧行为一致）")
+	await clear_arena()
+	# 这一段里的敌机是夹具（为了让指示器有目标、也为了腾地方），但它们走的是真实的
+	# 击毁路径、会加分。后面的计分断言要的是干净起点，所以这里显式复位——
+	# 与"连击会累积得分倍率，夹具测试前必须清零"是同一类隔离。
+	game.score = 0
+	game.combo = 0
+	game.xp = 0
 
 	var enemy = make_enemy(Vector2(120, 250))
 	var bullet = load("res://scenes/PlayerBullet.tscn").instantiate()

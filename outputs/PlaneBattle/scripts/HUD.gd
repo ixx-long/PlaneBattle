@@ -13,6 +13,9 @@ signal pause_restarted
 signal shake_toggled(enabled: bool)
 ## 音量：bus_name 取 "Music" / "SFX"，percent 为 0~100。
 signal volume_changed(bus_name: String, percent: int)
+## 开始界面选了第几台战机，以及结算后想回开始界面换战机。
+signal ship_selected(index: int)
+signal change_ship_requested
 
 ## 与 Main 的选项数上限一一对应的键位，下标即卡片下标。基础 4 个，
 ## “幸运补给”可以让选项加到 5，所以这里准备好 5 个动作。
@@ -39,6 +42,10 @@ const CHOICE_ACTIONS: Array[String] = ["choice_1", "choice_2", "choice_3", "choi
 @onready var boss_label: Label = $BossLabel
 @onready var boss_bar: ProgressBar = $BossBar
 @onready var message_label: Label = $MessageLabel
+@onready var ship_caption: Label = $ShipCaption
+@onready var ship_buttons: Array[Button] = [$ShipButton0, $ShipButton1, $ShipButton2]
+@onready var ship_detail: Label = $ShipDetail
+@onready var change_ship_button: Button = $ChangeShipButton
 @onready var start_button: Button = $StartButton
 @onready var restart_button: Button = $RestartButton
 @onready var overlay: ColorRect = $Overlay
@@ -74,6 +81,9 @@ func _ready() -> void:
 	sfx_slider.value_changed.connect(_on_sfx_changed)
 	pause_resume_button.pressed.connect(_on_pause_resume_pressed)
 	pause_restart_button.pressed.connect(_on_pause_restart_pressed)
+	change_ship_button.pressed.connect(_on_change_ship_pressed)
+	for index in range(ship_buttons.size()):
+		ship_buttons[index].pressed.connect(_on_ship_pressed.bind(index))
 	for index in range(upgrade_cards.size()):
 		upgrade_cards[index].pressed.connect(_on_upgrade_card_pressed.bind(index))
 	hide_level_up()
@@ -133,18 +143,48 @@ func pulse_score() -> void:
 	_pulse_tween.tween_property(score_label, "scale", Vector2.ONE, score_pulse_duration) \
 		.set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
 
-func show_start() -> void:
+func show_start(ships: Array[Dictionary], selected: int) -> void:
 	_set_message_visible(true)
 	# 五行的长度都量过：MessageLabel 是固定矩形，多一行就会顶破它（有断言盯着）。
 	message_label.text = "飞机大作战\n\n连续击毁提升倍率 · 受伤或漏敌清零\n紫色敌机瞄准你 · 漏敌还会抬高难度\n普通 +10 / 射击 +20 · 初始 3 命 · 短暂无敌"
-	hint_label.text = "WASD / 方向键 移动   ·   空格 持续射击"
+	hint_label.text = "WASD / 方向键 移动   ·   空格 持续射击   ·   Shift 低速"
 	start_button.show()
 	restart_button.hide()
+	change_ship_button.hide()
+	show_ship_choice(ships, selected)
+
+func show_ship_choice(ships: Array[Dictionary], selected: int) -> void:
+	# 按钮的位置**按实际台数算**，不写死三档坐标：以后加第四台战机时
+	# 只需要往 Main 的 SHIPS 里加一条，这里会自动排开，不会出现"新战机叠在旧的上面"。
+	ship_caption.visible = true
+	ship_detail.visible = true
+	var usable_count: int = mini(ships.size(), ship_buttons.size())
+	var left: float = 45.0
+	var right: float = 435.0
+	var gap: float = 8.0
+	var width: float = (right - left - gap * float(maxi(usable_count - 1, 0))) / float(maxi(usable_count, 1))
+	for index in range(ship_buttons.size()):
+		var button: Button = ship_buttons[index]
+		var usable: bool = index < usable_count
+		button.visible = usable
+		if not usable:
+			continue
+		button.offset_left = left + float(index) * (width + gap)
+		button.offset_right = button.offset_left + width
+		button.text = ships[index]["name"]
+		# 选中的那台按下去。ButtonGroup 保证同时只有一台是按下状态。
+		button.set_pressed_no_signal(index == selected)
+	var detail: String = ""
+	if selected >= 0 and selected < ships.size():
+		detail = str(ships[selected]["detail"])
+	ship_detail.text = detail
 
 func show_playing() -> void:
 	_set_message_visible(false)
 	start_button.hide()
 	restart_button.hide()
+	change_ship_button.hide()
+	_set_ship_choice_visible(false)
 	# 不写具体数字：选项数会随“幸运补给”变化，写死迟早变成谎话
 	#（升级面板顶部那行是按实际张数动态生成的，这里只说“数字键”）。
 	hint_label.text = "击毁敌机升级   /   升级后按数字键选择能力"
@@ -166,9 +206,12 @@ func show_game_over(report: Dictionary) -> void:
 		String(report["build_text"]),
 		closing,
 	]
-	hint_label.text = "按 R 或点击按钮重新开始"
+	hint_label.text = "按 R 或点击按钮重新开始，也可以换个战机再来"
 	start_button.hide()
 	restart_button.show()
+	# 结算页给出回到开始界面的入口。没有这条回路，玩家打完一局就再也见不到战机选择——
+	# READY 只在启动时出现一次，那等于"战机只能选一次、永远不能改"。
+	change_ship_button.show()
 
 func show_level_up(current_level: int, offers: Array[Dictionary]) -> void:
 	level_up_overlay.visible = true
@@ -252,6 +295,20 @@ func _set_message_visible(value: bool) -> void:
 	overlay.visible = value
 	message_panel.visible = value
 	message_label.visible = value
+
+func _set_ship_choice_visible(value: bool) -> void:
+	ship_caption.visible = value
+	ship_detail.visible = value
+	for button in ship_buttons:
+		button.visible = value
+
+func _on_ship_pressed(index: int) -> void:
+	ship_buttons[index].release_focus()
+	ship_selected.emit(index)
+
+func _on_change_ship_pressed() -> void:
+	change_ship_button.release_focus()
+	change_ship_requested.emit()
 
 func _on_start_pressed() -> void:
 	start_button.release_focus()

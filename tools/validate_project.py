@@ -24,7 +24,7 @@ ENGINE = ROOT / 'tools/godot-4.7.2/Godot_v4.7.2-stable_win64_console.exe'
 
 # 压力/威胁/浸泡基准都要跑满若干秒测量 + 等待清场，给它们的上限比其它模式宽一些；
 # 它们自带的看门狗（75 / 75 / 150 秒）仍会先于这里触发并给出明确原因。
-TIMEOUTS = {'stress': 150, 'threat': 150, 'soak': 240}
+TIMEOUTS = {'stress': 150, 'threat': 220, 'soak': 240}
 DEFAULT_TIMEOUT = 90
 
 parser = argparse.ArgumentParser(description='用真实引擎验证 Godot 项目')

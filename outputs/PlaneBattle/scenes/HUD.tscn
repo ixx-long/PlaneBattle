@@ -1,7 +1,21 @@
-[gd_scene load_steps=6 format=3]
+[gd_scene load_steps=8 format=3]
 
 [ext_resource type="Script" path="res://scripts/HUD.gd" id="1"]
 [ext_resource type="Theme" path="res://assets/ui_theme.tres" id="2"]
+
+[sub_resource type="ButtonGroup" id="ShipGroup"]
+
+[sub_resource type="StyleBoxFlat" id="ShipSelected"]
+bg_color = Color(0.09, 0.45, 0.55, 1)
+border_width_left = 2
+border_width_top = 2
+border_width_right = 2
+border_width_bottom = 2
+border_color = Color(0.04, 0.26, 0.34, 1)
+corner_radius_top_left = 6
+corner_radius_top_right = 6
+corner_radius_bottom_left = 6
+corner_radius_bottom_right = 6
 
 [sub_resource type="StyleBoxFlat" id="XpTrack"]
 bg_color = Color(0.86, 0.91, 0.94, 1)
@@ -169,17 +183,87 @@ color = Color(0.93, 0.97, 0.99, 0.80)
 [node name="MessagePanel" type="Panel" parent="."]
 layout_mode = 0
 offset_left = 30.0
-offset_top = 244.0
+offset_top = 182.0
 offset_right = 450.0
-offset_bottom = 530.0
+offset_bottom = 558.0
 mouse_filter = 2
+
+[node name="ShipCaption" type="Label" parent="."]
+layout_mode = 0
+offset_left = 45.0
+offset_top = 192.0
+offset_right = 435.0
+offset_bottom = 214.0
+mouse_filter = 2
+theme_override_colors/font_color = Color(0.32, 0.46, 0.53, 1)
+theme_override_font_sizes/font_size = 14
+text = "选择战机"
+horizontal_alignment = 1
+
+[node name="ShipButton0" type="Button" parent="."]
+layout_mode = 0
+offset_left = 45.0
+offset_top = 218.0
+offset_right = 169.0
+offset_bottom = 272.0
+focus_mode = 0
+toggle_mode = true
+button_group = SubResource("ShipGroup")
+theme_override_colors/font_pressed_color = Color(1, 1, 1, 1)
+theme_override_styles/pressed = SubResource("ShipSelected")
+theme_override_styles/hover_pressed = SubResource("ShipSelected")
+theme_override_font_sizes/font_size = 16
+text = "标准型"
+
+[node name="ShipButton1" type="Button" parent="."]
+layout_mode = 0
+offset_left = 177.0
+offset_top = 218.0
+offset_right = 301.0
+offset_bottom = 272.0
+focus_mode = 0
+toggle_mode = true
+button_group = SubResource("ShipGroup")
+theme_override_colors/font_pressed_color = Color(1, 1, 1, 1)
+theme_override_styles/pressed = SubResource("ShipSelected")
+theme_override_styles/hover_pressed = SubResource("ShipSelected")
+theme_override_font_sizes/font_size = 16
+text = "游隼型"
+
+[node name="ShipButton2" type="Button" parent="."]
+visible = false
+layout_mode = 0
+offset_left = 309.0
+offset_top = 218.0
+offset_right = 433.0
+offset_bottom = 272.0
+focus_mode = 0
+toggle_mode = true
+button_group = SubResource("ShipGroup")
+theme_override_colors/font_pressed_color = Color(1, 1, 1, 1)
+theme_override_styles/pressed = SubResource("ShipSelected")
+theme_override_styles/hover_pressed = SubResource("ShipSelected")
+theme_override_font_sizes/font_size = 16
+text = "聚焦型"
+
+[node name="ShipDetail" type="Label" parent="."]
+layout_mode = 0
+offset_left = 45.0
+offset_top = 278.0
+offset_right = 435.0
+offset_bottom = 300.0
+mouse_filter = 2
+theme_override_colors/font_color = Color(0.32, 0.46, 0.53, 1)
+theme_override_font_sizes/font_size = 13
+text = "平行弹幕"
+horizontal_alignment = 1
 
 [node name="MessageLabel" type="Label" parent="."]
 layout_mode = 0
 offset_left = 45.0
-offset_top = 268.0
+offset_top = 306.0
 offset_right = 435.0
-offset_bottom = 422.0
+offset_bottom = 436.0
 mouse_filter = 2
 theme_override_font_sizes/font_size = 18
 text = "飞机大作战"
@@ -191,7 +275,7 @@ layout_mode = 0
 offset_left = 82.0
 offset_top = 452.0
 offset_right = 398.0
-offset_bottom = 506.0
+offset_bottom = 500.0
 focus_mode = 0
 text = "开始飞行  /  R"
 
@@ -201,9 +285,19 @@ layout_mode = 0
 offset_left = 82.0
 offset_top = 452.0
 offset_right = 398.0
-offset_bottom = 506.0
+offset_bottom = 500.0
 focus_mode = 0
 text = "再次起飞  /  R"
+
+[node name="ChangeShipButton" type="Button" parent="."]
+visible = false
+layout_mode = 0
+offset_left = 82.0
+offset_top = 508.0
+offset_right = 398.0
+offset_bottom = 550.0
+focus_mode = 0
+text = "更换战机"
 
 [node name="BottomBar" type="ColorRect" parent="."]
 layout_mode = 0

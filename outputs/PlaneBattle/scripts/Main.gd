@@ -42,6 +42,7 @@ const SETTINGS_SECTION: String = "settings"
 const SETTINGS_SHAKE: String = "screen_shake"
 const SETTINGS_MUSIC: String = "music_percent"
 const SETTINGS_SFX: String = "sfx_percent"
+const SETTINGS_SHIP: String = "ship"
 
 ## 升级时的基础选项数；“幸运补给”每层再多给 1 个。
 const BASE_OFFERS: int = 4
@@ -72,6 +73,60 @@ const UPGRADES: Array[Dictionary] = [
 	{"id": "bounty", "name": "战果结算", "detail": "得分 +20%", "max": 4},
 	{"id": "steady", "name": "战术从容", "detail": "难度上升间隔 +3 秒", "max": 3},
 	{"id": "fortune", "name": "幸运补给", "detail": "升级多 1 个选项", "max": 1},
+]
+
+## 可选战机。开局由玩家选定，形态因此**不进抽卡池**——不会稀释 16 项能力的抽取，
+## 也不会出现"什么都拿一点"导致覆盖形状与输出同时膨胀。
+##
+## 第一版刻意只改**武器行为与外形**，不碰移速/生命/冷却：三台战机各自换一套武器，
+## 需要验证的组合已经翻了三倍，再叠加数值取舍，出问题时就分不清是形态还是数值造成的。
+## 数值取舍留到形态稳定之后当调味。
+##
+## 每台战机的"代价"都必须是真实存在的，否则形态就只是纯增强：
+## 追踪弹弹道弯曲 ⇒ 形不成弹幕墙 ⇒ 拦截弹几乎失效（这条是自然涌现的，不需要额外写规则）。
+const SHIPS: Array[Dictionary] = [
+	{
+		"id": "parallel",
+		"name": "标准型",
+		"detail": "平行弹幕 · 每级一条竖直车道，弹幕墙能靠拦截弹清掉敌弹",
+		"homing": false,
+		"bullet_speed_scale": 1.0,
+		"homing_turn_rate": 0.0,
+		"homing_lock_range": 0.0,
+		"hull": [Vector2(0, -32), Vector2(10, -7), Vector2(27, 13), Vector2(27, 21), Vector2(8, 15),
+			Vector2(7, 28), Vector2(-7, 28), Vector2(-8, 15), Vector2(-27, 21), Vector2(-27, 13), Vector2(-10, -7)],
+		"hull_color": Color(0.04, 0.42, 0.55, 1),
+		"cockpit_color": Color(0.64, 0.95, 0.99, 1),
+		"engine_color": Color(1, 0.65, 0.23, 1),
+	},
+	{
+		"id": "homing",
+		"name": "游隼型",
+		"detail": "追踪弹 · 近距离自动锁定，代价是打不到远处",
+		"homing": true,
+		"bullet_speed_scale": 0.75,
+		# 转向速率是这台战机的**平衡支点**，不是手感参数：所有追踪弹共享同一个目标，
+		# 目标一死就全体改追下一个，转得越慢、弹群重新聚拢越久，后面出生的敌机才有机会
+		# 活到开火。初版取 5.0 时基准实测击毁率 94~95%、敌方弹幕被打到 0——等于把威胁
+		# 整个抹平。要压住的是"重新锁定的吞吐"，不是命中率（敌机朝玩家下来，追踪一定撞得上）。
+		"homing_turn_rate": 4.0,
+		# **这是这台战机的平衡支点，不是手感参数。**
+		# 追踪弹只在目标进入"距玩家多少像素"以内才锁定；更远的敌机不追，子弹照直飞。
+		# 为什么必须是射程而不是转向速率：实测把转向降到 1.0 仍无济于事（击毁率 92~96%），
+		# 因为满配每秒 148 发、在飞约 170 发，弹群密度太高，敌机附近总有弹。
+		# 而"敌机是朝玩家下来的"意味着只要射程不限，追踪一定撞得上——用命中率压不住它。
+		# 限制射程之后，上半屏的敌机不会被打，它们因此能活到开火，威胁就回来了。
+		# 代价同时也是这台战机的身份：**打不到远处的东西，只能近程拦阻**。
+		# 实测曲线（威胁基准，难度 30 的"到达/秒"，门槛 12）：
+		#   射程 70 → 15.17 · 110 → 15.33（达标）· 300 → 6.50 · 600 → 5.17 · 不限制 → ~0
+		# 断点很陡，所以这个数字是**平衡参数**而不是手感参数，改它必须重跑基准。
+		"homing_lock_range": 110.0,
+		"hull": [Vector2(0, -36), Vector2(7, -8), Vector2(20, 2), Vector2(31, 22), Vector2(12, 13),
+			Vector2(6, 28), Vector2(-6, 28), Vector2(-12, 13), Vector2(-31, 22), Vector2(-20, 2), Vector2(-7, -8)],
+		"hull_color": Color(0.06, 0.44, 0.38, 1),
+		"cockpit_color": Color(0.72, 0.98, 0.88, 1),
+		"engine_color": Color(1, 0.78, 0.32, 1),
+	},
 ]
 
 @export var initial_lives: int = 3
@@ -186,6 +241,13 @@ var _sfx_cursor: int = 0
 ## 显示的就是真实状态，而不是一个写死的 100%。
 var music_percent: int = 100
 var sfx_percent: int = 100
+## 当前战机（SHIPS 里的 id）。开局选定并记住，形态因此不进抽卡池。
+var ship_id: String = "parallel"
+## 追踪弹的目标指示器。做成一个不可见的 Marker2D：Main 每帧只算一次"最近的敌机"，
+## 子弹做一次 O(1) 的组查询去读它。
+## **不能**让每颗子弹各自遍历敌机——满配每秒 148 发，那会变成每秒几千次全表搜索。
+## 这个写法与 Enemy 瞄准玩家时用 `get_first_node_in_group("player")` 是同一个套路。
+var _target_marker: Marker2D
 
 func _ready() -> void:
 	# tuning 是 Resource 类型（项目约定不写 class_name，没法标成具体类型），所以
@@ -203,6 +265,8 @@ func _ready() -> void:
 	hud.pause_restarted.connect(_on_pause_restarted)
 	hud.shake_toggled.connect(_on_shake_toggled)
 	hud.volume_changed.connect(_on_volume_changed)
+	hud.ship_selected.connect(select_ship)
+	hud.change_ship_requested.connect(return_to_hangar)
 	player.player_hit.connect(_on_player_hit)
 	player.shoot_requested.connect(_on_player_shoot_requested)
 	# 在能力改动之前记录 Player 的导出初值，供每次重开还原。
@@ -214,9 +278,11 @@ func _ready() -> void:
 	lives = initial_lives
 	_load_best_score()
 	_load_settings()
+	_build_target_marker()
+	_apply_ship()
 	player.deactivate()
 	_refresh_hud()
-	hud.show_start()
+	hud.show_start(SHIPS, selected_ship_index())
 
 func _process(delta: float) -> void:
 	if state != GameState.PLAYING:
@@ -262,8 +328,116 @@ func effective_max_level() -> int:
 func player_dps_proxy() -> float:
 	# “每秒能打出多少发”就是玩家当前的输出强度：本作所有敌机都是一发击毁，
 	# 所以伤害与弹幕密度完全等价，不需要另算伤害公式。
+	#
+	# 战机在这里**不需要额外折算**：追踪弹仍然是"每发子弹 × 每秒发数"，只是弹道会拐弯，
+	# 因此 Boss 血量自动就是对的。将来加光束这类"没有子弹"的武器时才必须在这里补一项，
+	# 否则 Boss 会按一个偏低的输出算血量、死得比 boss_target_seconds 快得多。
 	var per_shot: float = float(_bullet_count + _wing_pairs * 2)
 	return per_shot / maxf(player.shoot_cooldown, 0.01)
+
+func current_ship() -> Dictionary:
+	for entry in SHIPS:
+		if entry["id"] == ship_id:
+			return entry
+	# 存档里可能留着一个已经不存在的战机 id（改版后）。退回第一台并出声，
+	# 而不是让 current_ship() 返回空字典、然后在别处崩在缺字段上。
+	push_warning("未知的战机 id，改用默认战机：%s" % ship_id)
+	return SHIPS[0]
+
+func selected_ship_index() -> int:
+	for index in range(SHIPS.size()):
+		if SHIPS[index]["id"] == ship_id:
+			return index
+	return 0
+
+func ship_uses_homing() -> bool:
+	return bool(current_ship().get("homing", false))
+
+func ship_bullet_speed_scale() -> float:
+	return float(current_ship().get("bullet_speed_scale", 1.0))
+
+func set_ship(id: String) -> bool:
+	# 返回是否真的换成了：存档与测试都需要知道"这个 id 认不认"。
+	for entry in SHIPS:
+		if entry["id"] == id:
+			ship_id = id
+			_apply_ship()
+			_save_settings()
+			return true
+	push_warning("忽略未知的战机 id：%s" % id)
+	return false
+
+func select_ship(index: int) -> void:
+	# 来自开始界面的按钮。越界直接忽略，不让 UI 的一个坏下标改掉游戏状态。
+	if index < 0 or index >= SHIPS.size():
+		return
+	set_ship(SHIPS[index]["id"])
+
+func _apply_ship() -> void:
+	# 规则归 Main、显示归 Player：这里把选中的战机数据交给 Player，由它换外形与配色。
+	player.apply_ship(current_ship())
+
+func return_to_hangar() -> void:
+	# 结算后回到开始界面，否则玩家打完一局就再也见不到战机选择——
+	# READY 只在启动时出现一次，没有这条回路就等于"战机只能选一次、永远不能改"。
+	if state == GameState.PLAYING:
+		_set_paused(false)
+		player.deactivate()
+		_clear_entities()
+		enemy_timer.stop()
+	state = GameState.READY
+	_stop_screen_shake()
+	hud.hide_level_up()
+	hud.hide_pause()
+	hud.hide_boss()
+	offers = []
+	_refresh_hud()
+	hud.show_start(SHIPS, selected_ship_index())
+
+func _build_target_marker() -> void:
+	# 纯运行时的管道节点，所以用代码建而不是摆进场景（与 Sfx 音效池同样的理由）。
+	_target_marker = Marker2D.new()
+	_target_marker.name = "TargetMarker"
+	_target_marker.add_to_group("player_target")
+	add_child(_target_marker)
+
+func _update_target_marker() -> void:
+	# 每帧只做一次全表扫描，而不是让每颗追踪弹各自扫一遍。
+	# 只有当前战机用追踪弹时才需要——平行弹幕的子弹不看这个指示器。
+	if not ship_uses_homing():
+		_release_target()
+		return
+	# 只在射程内锁定。射程是这台战机的**平衡支点**（理由见 SHIPS 里的注释）：
+	# 上半屏的敌机不被锁定，它们才有机会活到开火。
+	var lock_range: float = float(current_ship().get("homing_lock_range", 0.0))
+	var nearest: Node2D = null
+	var best_distance: float = lock_range * lock_range
+	for enemy in get_tree().get_nodes_in_group("enemy"):
+		if not is_instance_valid(enemy) or enemy.is_queued_for_deletion():
+			continue
+		var distance: float = enemy.global_position.distance_squared_to(player.global_position)
+		if distance < best_distance:
+			best_distance = distance
+			nearest = enemy
+	if nearest != null:
+		_target_marker.global_position = nearest.global_position
+		if not _target_marker.is_in_group("player_target"):
+			_target_marker.add_to_group("player_target")
+	else:
+		# 没有锁定目标时**必须把指示器摘出组**，让子弹照直飞。
+		# 第一版是把它摆到玩家正上方，结果两侧车道的子弹全都朝中间拐，弹幕从
+		# "一排平行车道"变成"一束"——那已经是另一套武器，基准量到的也就不再是追踪弹。
+		# 症状很好认：射程 70 与 110 量出逐位相同的结果，说明这个参数根本没参与。
+		_release_target()
+
+func _release_target() -> void:
+	if _target_marker != null and _target_marker.is_in_group("player_target"):
+		_target_marker.remove_from_group("player_target")
+
+func _physics_process(_delta: float) -> void:
+	if state != GameState.PLAYING:
+		return
+	_update_target_marker()
 
 func _unhandled_input(event: InputEvent) -> void:
 	if event.is_action_pressed("restart") and not event.is_echo():
@@ -676,6 +850,10 @@ func _spawn_player_bullet(at: Vector2) -> void:
 	bullet.pierce_left = _bullet_pierce
 	bullet.intercepts = _bullet_intercepts
 	bullet.play_area_top = play_area_top
+	# 战机决定弹道行为：追踪弹会拐向目标指示器，平行弹幕保持竖直。
+	bullet.homing = ship_uses_homing()
+	bullet.homing_turn_rate = float(current_ship().get("homing_turn_rate", 0.0))
+	bullet.speed = _bullet_speed * ship_bullet_speed_scale()
 	# direction 保持默认的正上方，弹道竖直，所以图形旋转量恒为 0。
 	# 弹体增幅：直接缩放节点，碰撞形状与图形一起变大，因此“更好命中”是真的生效。
 	bullet.scale = Vector2.ONE * _bullet_scale
@@ -1007,6 +1185,8 @@ func _build_run_report(is_new_record: bool) -> Dictionary:
 		"hit_times": hit_times.duplicate(),
 		"escapes": escaped_count,
 		"peak_combo": peak_combo_multiplier,
+		# 战机也要进记录：否则事后看试玩数据时，分不清某一局的战绩属于哪种武器形态。
+		"ship": ship_id,
 		"record": is_new_record,
 		"build": upgrade_stacks.duplicate(),
 		"build_text": build_summary(),
@@ -1112,6 +1292,12 @@ func _load_settings() -> void:
 	screen_shake_enabled = bool(config.get_value(SETTINGS_SECTION, SETTINGS_SHAKE, screen_shake_enabled))
 	music_percent = clampi(int(config.get_value(SETTINGS_SECTION, SETTINGS_MUSIC, music_percent)), 0, 100)
 	sfx_percent = clampi(int(config.get_value(SETTINGS_SECTION, SETTINGS_SFX, sfx_percent)), 0, 100)
+	# 战机也记住：玩家选过一次之后不该每局都要重选。
+	var stored_ship: String = str(config.get_value(SETTINGS_SECTION, SETTINGS_SHIP, ship_id))
+	for entry in SHIPS:
+		if entry["id"] == stored_ship:
+			ship_id = stored_ship
+			break
 	_apply_audio_settings()
 
 func _save_settings() -> void:
@@ -1121,6 +1307,7 @@ func _save_settings() -> void:
 	config.set_value(SETTINGS_SECTION, SETTINGS_SHAKE, screen_shake_enabled)
 	config.set_value(SETTINGS_SECTION, SETTINGS_MUSIC, music_percent)
 	config.set_value(SETTINGS_SECTION, SETTINGS_SFX, sfx_percent)
+	config.set_value(SETTINGS_SECTION, SETTINGS_SHIP, ship_id)
 	var error: Error = config.save(SAVE_PATH)
 	if error != OK:
 		# 写盘失败不阻断游玩：设置仍留在内存里，本局照常。

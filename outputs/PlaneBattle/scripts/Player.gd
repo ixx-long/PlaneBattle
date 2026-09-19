@@ -14,6 +14,9 @@ signal shoot_requested(origin: Vector2)
 
 @onready var muzzle: Marker2D = $Muzzle
 @onready var visual: Node2D = $Visual
+@onready var hull: Polygon2D = $Visual/Hull
+@onready var cockpit: Polygon2D = $Visual/Cockpit
+@onready var engine: Polygon2D = $Visual/Engine
 @onready var hitbox_hint: Node2D = $Visual/HitboxHint
 @onready var hitbox_area: Polygon2D = $Visual/HitboxHint/Area
 
@@ -40,6 +43,20 @@ func _sync_hitbox_hint() -> void:
 			Vector2(-half.x, -half.y), Vector2(half.x, -half.y),
 			Vector2(half.x, half.y), Vector2(-half.x, half.y),
 		])
+
+func apply_ship(data: Dictionary) -> void:
+	# 战机只决定**外形与配色**（武器行为由 Main 在生成子弹时设定，因为那属于规则）。
+	# 数据整体来自 Main 的 SHIPS 表，Player 不自己养一份，避免两处各写一套然后不一致。
+	if data.has("hull"):
+		# 表里存的是 Vector2 数组字面量（const 里不能构造 PackedVector2Array），
+		# 这里转一次即可。
+		hull.polygon = PackedVector2Array(data["hull"])
+	if data.has("hull_color"):
+		hull.color = data["hull_color"]
+	if data.has("cockpit_color"):
+		cockpit.color = data["cockpit_color"]
+	if data.has("engine_color"):
+		engine.color = data["engine_color"]
 
 func reset_for_game(spawn_position: Vector2) -> void:
 	life_epoch += 1
