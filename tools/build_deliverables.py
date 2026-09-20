@@ -20,7 +20,7 @@ ENV_DIAGNOSTIC_NOTE = '（引擎环境诊断：本次运行环境读取 Windows 
 #: 共用一个列表会去找一个并不存在的 scenes/WaveTuning.tscn。
 SCENE_NAMES = ('Main', 'Player', 'PlayerBullet', 'Enemy', 'EnemyBullet', 'Explosion', 'Boss', 'HUD', 'Beam')
 SCRIPT_NAMES = ('Main', 'Player', 'PlayerBullet', 'Enemy', 'EnemyBullet', 'Explosion', 'Boss', 'HUD', 'Beam', 'WaveTuning')
-TEST_NAMES = ('SmokeTest', 'StressTest', 'VisualTest', 'ThreatTest', 'SoakTest')
+TEST_NAMES = ('SmokeTest', 'StressTest', 'VisualTest', 'ThreatTest', 'SoakTest', 'PursuitTest')
 #: 项目根目录下必须一起打包的文本资源。default_bus_layout.tres 漏掉的话，
 #: 解压出来的项目里没有 Music/SFX 总线，代码里的 bus="Music" 会静默回落到 Master。
 ROOT_FILES = ('project.godot', 'default_bus_layout.tres')
@@ -132,7 +132,7 @@ require_clean(smoke, 'smoke')
 # 断言项数量会随测试增长。写死会让文档在改测试后说谎，因此从日志的实际结果读取。
 passed, total, _ = smoke_totals(smoke)
 feature_badge = f'<span>{passed} / {total} 自动检查通过</span>'
-for kind in ('import', 'launch', 'visual', 'stress', 'threat', 'soak'):
+for kind in ('import', 'launch', 'visual', 'stress', 'threat', 'soak', 'pursuit'):
     require_clean((OUT / f'{kind}-results.txt').read_text(encoding='utf-8'), kind)
 # 压力基准的结论要进文档，所以这里把它量出来的关键数字读出来核对一遍。
 stress_log = (OUT / 'stress-results.txt').read_text(encoding='utf-8')
@@ -162,6 +162,23 @@ soak_match = re.search(
 assert soak_match, '浸泡基准日志里找不到 SOAK 汇总行'
 soak_seconds, soak_first_frame, soak_second_frame, soak_early_peak, soak_late_peak, \
     soak_residual, soak_object_growth = soak_match.groups()
+# 追击基准：三台战机在"玩家按人的方式打"时的差距，以及"站着不动打不到 Boss"这条取舍。
+# 它量的是威胁基准量不到的东西——威胁基准把玩家钉死并让他盲目扫射，而真人是看着敌机打的。
+pursuit_log = (OUT / 'pursuit-results.txt').read_text(encoding='utf-8')
+pursuit_rows = re.findall(
+    r'PURSUIT: 战机=(\S+) 难度=(\d+) 敌机=(\d+) 击毁=(\d+)% 每架开火=([\d.]+) 到达/秒=([\d.]+) 击毁距离=(\d+)',
+    pursuit_log)
+assert pursuit_rows, '追击基准日志里找不到 PURSUIT 汇总行'
+pursuit_boss = re.findall(
+    r'PURSUIT-BOSS: 战机=(\S+) 满血=(\d+) 每秒扣血=([\d.]+) 击破=([\d.]+)s', pursuit_log)
+assert pursuit_boss, '追击基准日志里找不到 PURSUIT-BOSS 行'
+pursuit_still = re.findall(
+    r'PURSUIT-BOSS-STILL: 战机=(\S+) 满血=(\d+) 每秒扣血=([\d.]+)', pursuit_log)
+assert pursuit_still, '追击基准日志里找不到 PURSUIT-BOSS-STILL 行'
+pursuit_kills = ' · '.join('%s %s%%' % (row[0], row[3]) for row in pursuit_rows)
+pursuit_boss_text = ' · '.join('%s %ss' % (row[0], row[3]) for row in pursuit_boss)
+pursuit_still_text = ' · '.join('%s %s/秒' % (row[0], row[2]) for row in pursuit_still)
+pursuit_min_kills = min(int(row[3]) for row in pursuit_rows)
 
 summary = f'''- 实际引擎：`4.7.2.stable.official.ed1daf0bf`（Windows x86_64 Standard 官方发行包）。
 - 引擎下载包 SHA-256 已与官方发行 API 的摘要核对一致；引擎二进制不打包进源码交付物。
@@ -198,6 +215,12 @@ summary = f'''- 实际引擎：`4.7.2.stable.official.ed1daf0bf`（Windows x86_6
 - **实现了“开局选战机”（武器形态分叉）**。评估指出"所有升级都是 +1 条平行直线，build 到后期就是 11 条直线"，这个结构比中途发形态卡更好：形态不进抽卡池、不稀释 16 项能力的抽取，也不会出现"什么都拿一点"导致覆盖形状与输出同时膨胀，还避开了"中途改武器会让前几级投资作废"。当前三台：**标准型**（平行弹幕，基线）、**游隼型**（追踪弹）与**聚焦型**（贯穿光束）。战机只改**武器行为与外形**，不碰移速/生命/冷却——每台各换一套武器，需要验证的组合已经翻倍，再叠加数值取舍就无法干净归因。选择会写进存档，结算页也补了"更换战机"的回路（没有它，READY 只在启动时出现一次，等于战机只能选一次、永远不能改）。
 - **第三台战机（聚焦型）的武器不是子弹，而是一条持续存在的竖直光柱**，这让它成了全项目结构上最特殊的一个实体：它没有飞行时间（敌机一进柱就在下一次结算时被击毁），也没有"每发"这个概念（输出 = 光柱条数 × 每秒结算次数），因此 `player_dps_proxy()` 为它单开一条分支来折算 Boss 血量，否则 Boss 会按偏低的输出算血量、死得比 `boss_target_seconds` 快得多。它的条数与横向位置**照抄子弹车道的算法**（`_lane_offsets()` 是子弹与光柱共用的唯一来源），所以"火力增援/侧翼炮"在这台战机上含义完全相同，平衡对比也就干净：差别只在"瞬间命中 vs 飞行时间"与"覆盖窄 vs 弹幕墙"。**代价（覆盖窄）不是靠手感调的，`beam_width` 就是它的平衡支点**，改它必须重跑威胁基准——与追踪导弹的 `seeker_interval` 是同一类参数。
 - **这台战机把三处"死选项"变成了真的选项，或者干脆不给**：输出全由光柱承担，所以"弹速强化"映射为**充能更快**（缩短结算间隔）、"拦截弹"表现为**光柱击落柱内敌弹**；而"穿透弹"对一条本来就贯穿整列敌人的光柱毫无意义，于是由 `is_upgrade_offered()` 直接不提供（并有对照断言：标准型仍然提供它）。**给一个"选了没变化"的选项，比不给更糟**——这条判断在第 1.1 节与第 10.2 节都留了记录。
+- **真人反馈"聚焦型太赖皮"之后，先量再改。** 原来的威胁基准把玩家钉死在屏幕下方并让他盲目扫射，这套走法对**瞬间命中**的光束是失真的——真人会看着敌机打、会往够得着的地方挪。于是新增了第六条基准 `tests/PursuitTest.gd`（模式 `pursuit`）：玩家只朝最近的敌机靠过去、每 0.15 秒更新一次目标（模拟反应延迟）、**完全不闪避**，因此它量的是"武器本身能打成什么样"，而不是"人能不能活下来"。它一上来就量到两个威胁基准完全看不见的东西：
+  - **Boss 血量被上限截断**。血量按"每秒发数 × 7 秒"反推，公式默认**发发命中**；子弹实际只兑现约 74%（Boss 会横向巡航、子弹要飞），所以子弹系要 9~10 秒；而光柱几乎 100% 兑现，公式给出 1925 点、**又被 1400 的血量上限砍掉**，Boss 5.1 秒就被打空——也就是说"按 7 秒设计"这件事在最高输出的那台战机上从来没有成立过。上限因此抬到 2400（高于任何合法 build 的公式值，只兜底不参与平衡）。
+  - **光柱既不需要预判、也不需要靠近**。子弹必须提前约 0.5 秒打在那个位置上；光柱是"现在指到谁谁就没"，而且原来直达战斗区顶边。量化之后最刺眼的一个数：**站在屏幕底部不动**，光柱对 Boss 有 **141.8 发/秒**的输出，而子弹系在同一个位置只有约 72/秒——Boss 战 5 秒结束、零风险。这就是"赖皮"的量化定义。
+  - 修法是给光柱加**射程上限 340 像素**（不再是全屏），并且这个数也是量出来的：玩家停在下方时光柱上端离 Boss 下沿还有约 47 像素，"站桩融化 Boss"被真正切断（**141.8 → 0**）；主动上前照打（击破 {pursuit_boss_text}，与子弹系同级）。放宽到 380 时只需往上挪十来个像素就能碰到 Boss，那条限制就退化成装饰了。
+  - **量准这件事本身也踩了一脚**：同一套配置在 6 秒窗口里量出三台击毁率 62% / 80% / 84%（差距 22 个点），看起来"削过头了"；把窗口放长到 10 秒才看清那是**窗口长度造成的假象**——敌人得先飞进光柱射程，短窗口把"需要敌人靠近"的武器的前半段算成了"没打中"。10 秒下实测击毁率 {pursuit_kills}（差距 7 个点，连跑三次一致），前场基本持平。**"量到了"和"量准了"是两件事。**
+  - 这条基准连同三条断言固化进了流水线：每台击毁率不低于 65%（实测最低 {pursuit_min_kills}%）、三台之间差距不超过 18 个百分点、**主动上前的 Boss 击破秒数必须落在 5~12 秒**；另有一条最关键的取舍断言——**光柱站在底部不动时必须对 Boss 打出 0 伤害（实测 {pursuit_still_text}），而子弹系在同一位置必须大于 0**。把射程调回全屏，这条会立刻失败（实测验证过：无射程限制时它报 `FAIL`，站桩输出 141.8）。
 - **这一轮又抓到两个我自己引入、而且断言全绿的缺陷**，症状都是同一类：**值只在"创建时"写对了，之后就不跟着规则走**。光束（以及它的结算间隔与拦截开关）的开局就在屏幕上，而玩家是**局中**才拿到"弹速强化 / 拦截弹"的；第一版只在生成光柱时写了这两个值一次，于是升级之后屏幕上的光柱仍按旧节奏结算、也仍然不拦敌弹，**玩家会认为升级没生效**。原有的断言查的是 `beam_tick_interval()` 这个函数的返回值，所以一直是绿的。两个值现在都走每帧的 `refresh()` 同步，回归断言也改为**针对已经存在的那根光柱**——断言的对象必须是玩家能看见的东西，而不是一个恰好正确的中间量。
 - **顺带修掉一处"看得见的东西与真实判定不符"**：光柱的亮芯多边形原来是判定宽度的一半，外围光晕是判定宽度的两倍，于是"看起来会造成伤害的范围"与"真正会造成伤害的范围"是两个数。现在**亮芯宽度 = 碰撞形状宽度 = `beam_width`**，光晕只做装饰，回归断言把三者钉在一起。这与 Player 的 Shift 判定提示是同一条纪律：一个与真实判定不符的提示，比没有提示更糟。
 - **追踪武器前后推翻了三版设计，过程值得完整记下来。** ①**每发子弹都追踪**：基准实测击毁率 96%、每架开火 0.00、到达/秒 **0**——敌机朝玩家下来，只要射程不受限追踪一定撞得上，而满配每秒 148 发全命中会把上半屏清空。②**只在 110 像素内锁定**：威胁回来了（15.33 达标），但那个距离几乎贴着玩家，**玩家根本看不见追踪**——**真人试玩直接反馈"没有追踪效果"，等于功能没做出来**。量清边界后确认可见与有威胁直接冲突、调参救不了（射程 110 → 15.33 达标、150 → 11.67 掉线）。③**最终版：主弹幕照直飞（弹幕墙与拦截弹不受影响），追踪由少量、全屏锁定、明显可辨的导弹提供**，用**发射节奏**控制总输出。实测间隔 1.0 → 11.50 掉线、**1.4 → 13.50 达标（采用）**、1.6 → 14.33。导弹还刻意**不继承穿透**——否则一发连杀 4 架，实测把击毁率从 56% 推到 80%。
@@ -225,7 +248,12 @@ md += (
 )
 for filename in SCRIPT_NAMES:
     md += source(f'scripts/{filename}.gd', 'gdscript')
-md += '\n### 附：可选开发测试脚本（不影响正式游戏）\n\n这两个文件无需手工复制也能运行游戏；完整项目附带它们供复验。\n'
+md += (
+    '\n### 附：可选开发测试脚本（不影响正式游戏）\n\n'
+    '下面三个脚本无需手工复制也能运行游戏；完整项目附带它们供复验，'
+    '另外三个基准（`ThreatTest` / `SoakTest` / `PursuitTest`）同样随包交付，'
+    '它们的作用与门槛写在第 8.5 节，源码见交付 ZIP 的 `tests/`。\n'
+)
 md += (
     source('tests/SmokeTest.gd', 'gdscript')
     + source('tests/VisualTest.gd', 'gdscript')

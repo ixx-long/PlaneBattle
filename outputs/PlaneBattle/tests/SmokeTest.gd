@@ -496,11 +496,32 @@ func _run() -> void:
 		if not is_equal_approx(beam_node.global_position.x, 240.0 + lane_offsets[index]):
 			beams_placed = false
 	check(beams_placed, "光束按车道偏移排开，并且跟随玩家")
+	# 光柱长度 = min(射程, 到战斗区顶边的距离)，两条边界各管一件事，所以要分别钉住。
+	# 射程是真人反馈"太赖皮"之后加的代价：没有它，玩家可以永远待在屏幕底部把上半屏扫干净。
+	var beam_range: float = float(game.current_ship()["beam_range"])
 	var beam_top: float = game.beams[0].global_position.y - game.beams[0].beam_length
 	check(
-		is_equal_approx(beam_top, game.play_area_top),
-		"光束上端止于战斗区顶边（不会伸到信息栏后面去杀还没露头的敌机）"
+		is_equal_approx(game.beams[0].beam_length, beam_range),
+		"玩家在屏幕下方时，光柱长度就是它的射程（够不到战斗区顶边）"
 	)
+	check(
+		beam_top > game.play_area_top,
+		"（对照）此时光柱上端确实在战斗区顶边之下：射程上限真的在起作用"
+	)
+	# 换成玩家贴近顶部：长度改由战斗区顶边决定，射程再大也不会伸到信息栏后面。
+	var standing_y: float = game.player.position.y
+	game.player.position = Vector2(240.0, game.play_area_top + 40.0)
+	game._physics_process(0.016)
+	check(
+		is_equal_approx(game.beams[0].global_position.y - game.beams[0].beam_length, game.play_area_top),
+		"玩家贴近顶部时，光柱止于战斗区顶边（不会伸到信息栏后面去杀还没露头的敌机）"
+	)
+	check(
+		is_equal_approx(game.beams[0].beam_length, game.player.position.y - 34.0 - game.play_area_top),
+		"（对照）此时长度由顶边而不是射程决定：两条边界互不干扰"
+	)
+	game.player.position = Vector2(240.0, standing_y)
+	game._physics_process(0.016)
 	# 看得见的"实体"必须等于真正会造成伤害的范围：亮芯宽度 = 碰撞形状宽度 = beam_width。
 	# 与 Player 的判定提示是同一条纪律——一个与真实判定不符的提示比没有提示更糟。
 	var core: Polygon2D = game.beams[0].get_node("Visual/Core")
@@ -523,6 +544,22 @@ func _run() -> void:
 	var out_of_beam = make_enemy(Vector2(outside_x, 300))
 	await settle(12)
 	check(is_instance_valid(out_of_beam), "光柱之外的敌机不受影响（覆盖窄就是这台战机的代价）")
+	# 射程是这台战机的**第二项代价**，同样写成成对断言：够不着 / 上去就够得着。
+	# 只断言"够不着"会漏掉另一种坏法——射程短到玩家贴上去也打不到，那样这台战机就废了。
+	var high_enemy = make_enemy(Vector2(beam_x, 150.0))
+	await settle(12)
+	check(
+		is_instance_valid(high_enemy),
+		"玩家在屏幕下方时，光柱够不到屏幕顶部的敌机（射程短是真的代价，不是装饰）"
+	)
+	game.player.position = Vector2(240.0, 400.0)
+	await settle(12)
+	check(
+		not is_instance_valid(high_enemy),
+		"玩家主动升上去之后，同一架敌机立刻被光柱烧掉（贴近换输出，位置选择有来有回）"
+	)
+	game.player.position = Vector2(240.0, standing_y)
+	await settle(2)
 	# 敌弹在光柱里会被清掉——这是"拦截弹"在这台战机上的表现形式。
 	# 拦截弹要在**光柱已经存在之后**拿到：光柱是从开局一直存在的，参数不会自己回头同步。
 	game.xp = 0

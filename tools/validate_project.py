@@ -1,11 +1,14 @@
 """用真实 Godot 引擎跑一种验证模式，并判读日志。
 
 模式（第一个位置参数，必填）：
-    import  无界面编辑器导入与资源扫描，确认脚本能解析、资源能加载
-    launch  正式主场景启动测试
-    smoke   285 项 GDScript 自动回归断言
-    visual  渲染 6 张验收截图
-    stress  最坏情况压力基准
+    import   无界面编辑器导入与资源扫描，确认脚本能解析、资源能加载
+    launch   正式主场景启动测试
+    smoke    GDScript 自动回归断言（条数从日志里读，不写死在这里）
+    visual   渲染验收截图
+    stress   最坏情况压力基准
+    threat   威胁基准：敌弹有多少真的到达玩家面前（玩家钉死不动）
+    soak     长时浸泡基准：连打 60 秒看会不会随时间退化
+    pursuit  追击基准：玩家按人的方式打时，三台战机在 Boss 战与前场的差距
 
 参数写法由 argparse 严格校验。早期版本直接读 sys.argv[1] 当模式、忽略其余参数，
 于是 `--project X --mode visual` 会静默退化成 smoke：不报错、跑的还是上一次的截图，
@@ -24,11 +27,11 @@ ENGINE = ROOT / 'tools/godot-4.7.2/Godot_v4.7.2-stable_win64_console.exe'
 
 # 压力/威胁/浸泡基准都要跑满若干秒测量 + 等待清场，给它们的上限比其它模式宽一些；
 # 它们自带的看门狗（75 / 75 / 150 秒）仍会先于这里触发并给出明确原因。
-TIMEOUTS = {'stress': 150, 'threat': 220, 'soak': 240}
+TIMEOUTS = {'stress': 150, 'threat': 220, 'soak': 240, 'pursuit': 300}
 DEFAULT_TIMEOUT = 90
 
 parser = argparse.ArgumentParser(description='用真实引擎验证 Godot 项目')
-parser.add_argument('mode', choices=('import', 'launch', 'smoke', 'visual', 'stress', 'threat', 'soak'))
+parser.add_argument('mode', choices=('import', 'launch', 'smoke', 'visual', 'stress', 'threat', 'soak', 'pursuit'))
 # 默认就是本仓库的工程；显式传入是为了验证交付 ZIP 解压出来的那一份（干净环境验证），
 # 而不是验证仓库里被各种缓存和中间产物覆盖过的工作副本。
 parser.add_argument('--project', default='outputs/PlaneBattle', help='要验证的工程目录')
@@ -61,6 +64,8 @@ elif args.mode == 'threat':
     cli = ['--headless', '--script', 'res://tests/ThreatTest.gd']
 elif args.mode == 'soak':
     cli = ['--headless', '--script', 'res://tests/SoakTest.gd']
+elif args.mode == 'pursuit':
+    cli = ['--headless', '--script', 'res://tests/PursuitTest.gd']
 elif args.mode == 'import':
     cli = ['--headless', '--editor', '--import', '--quit']
 elif args.mode == 'launch':

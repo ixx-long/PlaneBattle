@@ -98,6 +98,7 @@ const SHIPS: Array[Dictionary] = [
 		"seeker_lock_range": 0.0,
 		"beam": false,
 		"beam_width": 0.0,
+		"beam_range": 0.0,
 		"beam_tick_interval": 0.0,
 		"hull": [Vector2(0, -32), Vector2(10, -7), Vector2(27, 13), Vector2(27, 21), Vector2(8, 15),
 			Vector2(7, 28), Vector2(-7, 28), Vector2(-8, 15), Vector2(-27, 21), Vector2(-27, 13), Vector2(-10, -7)],
@@ -128,6 +129,7 @@ const SHIPS: Array[Dictionary] = [
 		"seeker_lock_range": 900.0,
 		"beam": false,
 		"beam_width": 0.0,
+		"beam_range": 0.0,
 		"beam_tick_interval": 0.0,
 		"hull": [Vector2(0, -36), Vector2(7, -8), Vector2(20, 2), Vector2(31, 22), Vector2(12, 13),
 			Vector2(6, 28), Vector2(-6, 28), Vector2(-12, 13), Vector2(-31, 22), Vector2(-20, 2), Vector2(-7, -8)],
@@ -138,13 +140,30 @@ const SHIPS: Array[Dictionary] = [
 	{
 		"id": "focus",
 		"name": "聚焦型",
-		"detail": "贯穿光束 · 出膛即中，敌机进入光柱就毁；代价是覆盖窄",
+		"detail": "贯穿光束 · 出膛即中，射程内的敌机进柱即毁；代价是覆盖窄、够不着远处",
 		# 光束**不是子弹**：没有飞行时间，敌机一进入这条竖线就在下一次结算时被击毁。
-		# 代价是覆盖——每条光柱只有 beam_width 像素宽。
+		# 两项代价缺一不可：
+		#   ① 覆盖窄——每条光柱只有 beam_width 像素宽；
+		#   ② **射程短**——光柱只延伸到玩家上方 beam_range 像素处，不再直达战斗区顶边。
+		# 第②条是真人试玩反馈"太赖皮"之后加的，理由记在这里，免得以后有人当成多余的限制作删：
+		# 出膛即中意味着**不需要预判**（子弹必须提前约 0.5 秒打在那个位置，光柱是"指到谁谁就没"），
+		# 而全屏射程意味着玩家可以永远待在屏幕底部把上半屏扫干净、也能站在安全距离把 Boss 融化。
+		# 量出来的证据：满配下光柱对 Boss 的真实输出 275/秒，是标准型（110/秒）的 2.5 倍，
+		# 而且**站在屏幕底部不动**就有 141.8/秒（子弹系在同一个位置只有约 72/秒）——
+		# Boss 5.1 秒被打空、还不用冒任何风险，这就是"赖皮"的量化定义。
+		# 加上射程上限之后，"哪里能打"重新变成一个要主动上前做的选择。
+		# **beam_range 与 beam_width 一样是平衡支点**，改它必须重跑 PursuitTest。
 		"beam": true,
-		# **beam_width 是这台战机的平衡支点**，改它必须重跑威胁基准：
-		# 光柱越宽，被瞬间清掉的敌机越多，敌方弹幕就越少。
+		# **beam_width / beam_range 是这台战机的平衡支点**，改它们必须重跑威胁基准：
+		# 光柱越宽、越远，被瞬间清掉的敌机越多，敌方弹幕就越少。
 		"beam_width": 10.0,
+		# **340 是量出来的**，不是随手取的整数：玩家停在屏幕下方时，光柱上端离 Boss 下沿
+		# 还有约 47 像素，"站着不动就能融化 Boss"因此被真正切断——追击基准实测站桩输出
+		# 从 **141.8/秒变成 0**；而主动上前照样打得到（8.5 秒击破，与另外两台的 8.0 秒同级）。
+		# 射程放宽到 380 时，往上挪十来个像素就能碰到 Boss，那条限制就退化成装饰了。
+		# 前场代价实测很小（10 秒窗口下三台击毁率 80% / 87% / 84%，这台居中），
+		# 但**短窗口会把它量得偏低**：敌人得先飞进射程，6 秒窗口里它只有 62%。
+		"beam_range": 340.0,
 		"beam_tick_interval": 0.08,
 		"seeker_interval": 0.0,
 		"seeker_speed_scale": 1.0,
@@ -406,6 +425,19 @@ func beam_tick_interval() -> float:
 		float(current_ship().get("beam_tick_interval", 0.08)) - 0.008 * float(_stacks_of("velocity"))
 	)
 
+func beam_length(muzzle_y: float) -> float:
+	# 光柱长度 = min(射程, 到战斗区顶边的距离)。两个限制各管一件事：
+	#   · 射程（beam_range）：这台战机必须在**近处**才烧得到敌人，于是“隔着半屏清场”、
+	#     “待在屏幕底部融化 Boss”这两件最赖皮的事都做不成了；
+	#   · 战斗区顶边（play_area_top）：光柱不会伸到顶部信息栏后面去杀还没露头的敌机
+	#     （与玩家子弹同样的边界，理由见 play_area_top 的注释）。
+	# 写成函数是为了让两条边界都能被直接断言，而不是埋在几何重建里靠眼睛看。
+	var reach: float = maxf(muzzle_y - play_area_top, 1.0)
+	var beam_range: float = float(current_ship().get("beam_range", 0.0))
+	if beam_range <= 0.0:
+		return reach
+	return clampf(beam_range, 1.0, reach)
+
 func lane_count() -> int:
 	# 车道数：子弹与光束共用同一个口径，所以两台战机的“多发/侧翼炮”含义完全一致。
 	return _bullet_count + _wing_pairs * 2
@@ -446,7 +478,7 @@ func _sync_beams() -> void:
 		return
 	var offsets_now: Array[float] = _lane_offsets()
 	var muzzle_y: float = player.global_position.y - 34.0
-	var length_now: float = maxf(muzzle_y - play_area_top, 1.0)
+	var length_now: float = beam_length(muzzle_y)
 	var interval_now: float = beam_tick_interval()
 	for index in range(beams.size()):
 		var beam = beams[index]

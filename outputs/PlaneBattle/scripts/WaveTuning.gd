@@ -99,7 +99,12 @@ extends Resource
 ## 要么前期打不动，要么后期一碰就碎。
 @export var boss_target_seconds: float = 7.0
 @export var boss_hp_floor: int = 45
-@export var boss_hp_cap: int = 1400
+## 血量上限。它**不是**"Boss 不该太肉"的保险丝而已——设小了会直接改写上面那 7 秒：
+## 满配聚焦型（光柱）的每秒伤害是 275，公式给出 1925，被 1400 截掉之后 Boss 只剩
+## **5.1 秒**的寿命。也就是说，"按 7 秒设计"这件事在最高输出的那台战机上从来没有成立过。
+## 现在取 2400：它仍然拦住任何离谱的数值，但已经高于所有合法 build 的公式值（275 × 7 = 1925），
+## 于是上限不再参与实际平衡，只管兜底。改这个值请连带复核"三台战机各自的击破秒数"。
+@export var boss_hp_cap: int = 2400
 ## 入场后停在距顶部多远处、以多快降下来，以及之后的横向巡航速度与可活动边距。
 @export var boss_hold_y: float = 150.0
 @export var boss_enter_speed: float = 90.0
