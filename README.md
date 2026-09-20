@@ -96,7 +96,7 @@ git push origin gh-pages                   # 推上去；首次还需在仓库 S
 
 导出时**必须关掉线程支持**（`variant/thread_support=false`）：带线程的 Web 导出要求服务器发 COOP/COEP 两个响应头，GitHub Pages 发不了，页面会一直卡在加载。
 
-> **改了版重新发布后请让对方强刷（Ctrl+F5 / Cmd+Shift+R）。** GitHub Pages 会给 `index.pck` / `index.wasm` 带上缓存头，而这两个文件名不随版本变化，所以浏览器可能还在用旧的那一份——"我明明改了，别人打开还是旧的"多半是这件事，不是没推上去。
+> **改了版怎么保证别人看到的是新版**：主包导出时会被改名成带内容指纹的 `plane-<hash>.pck`，`index.html` 里用官方的 `mainPack` 指向它——所以"新的 html 配旧的 pck"这种混合状态不会再出现（真机上发生过一次：中文方块修好之后重新发布，页面上还是方块，因为浏览器还在用十分钟前缓存的旧 pck）。`index.html` 自身仍受 Pages 的 `max-age=600` 影响，等一会儿或强刷（Ctrl+F5）即可；想立刻绕开缓存，在链接后面加个查询串就行，例如 `…/PlaneBattle/?v=2`。
 
 ## 项目结构
 

@@ -25,6 +25,7 @@ Web 版的四个产物里没有字体——中文能不能显示，取决于工�
 
 from pathlib import Path
 import argparse
+import hashlib
 import os
 import shutil
 import subprocess
@@ -72,12 +73,45 @@ def export() -> None:
     print(f'导出日志：{OUT / "export-log.txt"}')
 
 
-def verify() -> None:
+def add_cache_busting() -> str:
+    """把主包换成带内容指纹的文件名，并让 index.html 指向它。返回新的包名。
+
+    **为什么必须做**：GitHub Pages 给文件带 `max-age=600` 的缓存头，而 `index.pck`
+    这个名字永不变化。于是"改了版重新发布"会掉进一个很难查的状态：浏览器拿到了新的
+    index.html，却还在用十分钟前缓存的旧 pck——**看起来就是"我明明改了、打开还是旧的"**。
+    真机上已经发生过一次：中文方块修好之后重新发布，页面上还是方块。
+
+    做法取自导出产物自己：`index.js` 里 `const pack = this.config.mainPack || `${exe}.pck``，
+    也就是说 `mainPack` 是官方支持的"另一个 pck 名"，改它不会碰到 wasm/js 的加载路径
+    （那两个只在换引擎版本时才变，不需要指纹）。
+    """
+    pack = OUT / 'index.pck'
+    if not pack.is_file():
+        return ''
+    fingerprint = hashlib.sha256(pack.read_bytes()).hexdigest()[:8]
+    versioned = f'plane-{fingerprint}.pck'
+    shutil.copy2(pack, OUT / versioned)
+    html_path = OUT / 'index.html'
+    html = html_path.read_text(encoding='utf-8')
+    quote = '"executable":"index"'
+    if quote not in html:
+        raise SystemExit('index.html 里找不到 executable 配置，网页外壳换过格式？缓存击穿需要跟着改')
+    html = html.replace(quote, f'{quote},"mainPack":"{versioned}"', 1)
+    # fileSizes 只用于进度显示，但键名对不上会让进度条失真，顺手一起改。
+    html = html.replace('"index.pck":', f'"{versioned}":', 1)
+    html_path.write_text(html, encoding='utf-8')
+    print(f'主包指纹：{versioned}（已写进 index.html 的 mainPack）')
+    return versioned
+
+
+def verify() -> str:
+    """检查四个产物、缓存击穿是否到位，返回主包名。"""
     missing = [name for name in REQUIRED if not (OUT / name).is_file()]
     if missing:
         raise SystemExit(f'导出产物不完整，缺：{", ".join(missing)}')
+    pack_name = add_cache_busting()
     total = 0
-    for name in REQUIRED:
+    for name in REQUIRED + ((pack_name,) if pack_name else ()):
         size = (OUT / name).stat().st_size
         total += size
         print(f'  {name}: {size / 1048576:.2f} MB')
@@ -85,8 +119,14 @@ def verify() -> None:
     index = (OUT / 'index.html').read_text(encoding='utf-8', errors='replace')
     if 'crossOriginIsolated' in index or 'SharedArrayBuffer' in index:
         print('注意：index.html 里出现了 SharedArrayBuffer 相关代码，确认导出时关掉了线程支持')
+    if pack_name:
+        if f'"mainPack":"{pack_name}"' not in index:
+            raise SystemExit('index.html 里没有写进 mainPack，缓存击穿没生效')
+        if not (OUT / pack_name).is_file():
+            raise SystemExit(f'带指纹的主包不存在：{pack_name}')
     # GitHub Pages 默认走 Jekyll；加一个 .nojekyll 免得以下划线开头的资源被忽略。
     (OUT / '.nojekyll').write_text('', encoding='utf-8')
+    return pack_name
 
 
 def _git(args: list, cwd: Path, check: bool = True) -> subprocess.CompletedProcess:
