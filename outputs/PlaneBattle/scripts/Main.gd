@@ -9,6 +9,13 @@ const ENEMY_BULLET_SCENE: PackedScene = preload("res://scenes/EnemyBullet.tscn")
 const EXPLOSION_SCENE: PackedScene = preload("res://scenes/Explosion.tscn")
 const BOSS_SCENE: PackedScene = preload("res://scenes/Boss.tscn")
 const BEAM_SCENE: PackedScene = preload("res://scenes/Beam.tscn")
+## 追踪导弹的弹体轮廓：带尾翼的弹形（机头 + 弹身 + 左右尾翼）。它只属于游隼型的那一路
+## 武器，所以写在这里而不是塞进 SHIPS 表——表里的 bullet_hull 是"主弹幕"的形状，
+## 两者混在一起以后会分不清哪一行管哪一路。顺序是绕多边形一圈，不能打乱。
+const SEEKER_HULL: Array[Vector2] = [
+	Vector2(0, -10), Vector2(3, -4), Vector2(3, 8), Vector2(7, 13), Vector2(3, 11.5),
+	Vector2(-3, 11.5), Vector2(-7, 13), Vector2(-3, 8), Vector2(-3, -4),
+]
 ## 波次/难度参数表的脚本。项目约定不写 class_name，所以用 preload 拿脚本再 new()，
 ## 作为 .tres 漏配时的兜底——tuning 为 null 时整局会直接崩在第一次生成敌机上。
 const WAVE_TUNING_SCRIPT: GDScript = preload("res://scripts/WaveTuning.gd")
@@ -100,6 +107,12 @@ const SHIPS: Array[Dictionary] = [
 		"beam_width": 0.0,
 		"beam_range": 0.0,
 		"beam_tick_interval": 0.0,
+		# **每台战机只用自己的那一套弹体**：形状、弹体色、亮芯色都在这里，
+		# 生成子弹时由 _spawn_player_bullet() 一次性写进去。判定盒不跟着变——
+		# 视觉可以有个性，命中盒不能有个性（那会让"看得见"和"打得中"变成两件事）。
+		"bullet_hull": [Vector2(0, -12), Vector2(4, -6), Vector2(4, 10), Vector2(-4, 10), Vector2(-4, -6)],
+		"bullet_color": Color(0.02, 0.55, 0.67, 1),
+		"bullet_core_color": Color(0.68, 0.96, 1, 1),
 		"hull": [Vector2(0, -32), Vector2(10, -7), Vector2(27, 13), Vector2(27, 21), Vector2(8, 15),
 			Vector2(7, 28), Vector2(-7, 28), Vector2(-8, 15), Vector2(-27, 21), Vector2(-27, 13), Vector2(-10, -7)],
 		"hull_color": Color(0.04, 0.42, 0.55, 1),
@@ -131,6 +144,11 @@ const SHIPS: Array[Dictionary] = [
 		"beam_width": 0.0,
 		"beam_range": 0.0,
 		"beam_tick_interval": 0.0,
+		# 游隼型的弹体是**细长镖形 + 它自己的青绿配色**（与机身、座舱同一族颜色）：
+		# 换战机时弹道一眼能看出换了人，而不是只有技能描述里写着不一样。
+		"bullet_hull": [Vector2(0, -15), Vector2(3, -5), Vector2(3, 9), Vector2(-3, 9), Vector2(-3, -5)],
+		"bullet_color": Color(0.05, 0.42, 0.36, 1),
+		"bullet_core_color": Color(0.72, 0.98, 0.88, 1),
 		"hull": [Vector2(0, -36), Vector2(7, -8), Vector2(20, 2), Vector2(31, 22), Vector2(12, 13),
 			Vector2(6, 28), Vector2(-6, 28), Vector2(-12, 13), Vector2(-31, 22), Vector2(-20, 2), Vector2(-7, -8)],
 		"hull_color": Color(0.06, 0.44, 0.38, 1),
@@ -164,6 +182,9 @@ const SHIPS: Array[Dictionary] = [
 		# 前场代价实测很小（10 秒窗口下三台击毁率 80% / 87% / 84%，这台居中），
 		# 但**短窗口会把它量得偏低**：敌人得先飞进射程，6 秒窗口里它只有 62%。
 		"beam_range": 340.0,
+		# 这台战机**不出子弹**（输出由光柱承担），所以它没有 bullet_hull / bullet_color——
+		# 这是有意的而不是漏了：给它编一套永远用不上的弹体才是真的误导。
+		# _spawn_player_bullet() 里的默认值负责兜底（万一以后改成"光柱 + 子弹"）。
 		"beam_tick_interval": 0.08,
 		"seeker_interval": 0.0,
 		"seeker_speed_scale": 1.0,
@@ -591,10 +612,13 @@ func _spawn_seeker() -> void:
 	# 变成一比一，平衡才好预测。
 	bullet.pierce_left = 0
 	bullet.intercepts = _bullet_intercepts
-	# 让导弹一眼可辨：比主弹幕更大，并且**真的换掉弹体颜色**（不是用 modulate 乘法调色）。
-	# 可见性就是这么来的——不靠放宽锁定范围（那条路会让威胁归零）。
+	# 让导弹一眼可辨：比主弹幕更大，**换成带尾翼的弹体**，并且**真的换掉弹体颜色**
+	# （不是用 modulate 乘法调色）。可见性就是这么来的——不靠放宽锁定范围
+	# （那条路会让威胁归零）。
 	bullet.scale = Vector2.ONE * _bullet_scale * 1.6
+	bullet.body_polygon = PackedVector2Array(SEEKER_HULL)
 	bullet.body_color = Color(1.0, 0.62, 0.18, 1.0)
+	bullet.core_color = Color(1.0, 0.93, 0.72, 1.0)
 	actors.add_child(bullet)
 	bullet.global_position = player.global_position + Vector2.UP * 34.0
 
@@ -991,8 +1015,13 @@ func _spawn_explosion(at: Vector2, ticket: int) -> void:
 	if state == GameState.GAME_OVER or state == GameState.READY or ticket != run_id:
 		return
 	var burst = EXPLOSION_SCENE.instantiate()
+	# **位置必须在 add_child 之前写好。** Explosion._ready() 一进来就把 emitting 打开，
+	# 而 one_shot + explosiveness=1 会在那一瞬间把整批粒子按当时的坐标发射出去——之后再挪
+	# 节点，粒子已经留在原地了。真机上踩过一次：这里写成"先 add_child、再设坐标"，结果
+	# **所有击毁特效都画在左上角**，而当时的断言查的是节点位置（那个值是对的），一直绿着。
+	# 这条与敌机/Boss 的约定是同一个："导出值与位置一律在 add_child 之前写好"。
+	burst.position = at
 	actors.add_child(burst)
-	burst.global_position = at
 
 func _on_player_shoot_requested(origin: Vector2) -> void:
 	if ship_uses_beam():
@@ -1022,6 +1051,14 @@ func _spawn_player_bullet(at: Vector2) -> void:
 	bullet.pierce_left = _bullet_pierce
 	bullet.intercepts = _bullet_intercepts
 	bullet.play_area_top = play_area_top
+	# **弹体外观取自当前战机**：每台战机只用自己的那一套（形状 + 弹体色 + 亮芯色）。
+	# 表里没有这一项的战机（聚焦型：它不出子弹）就用脚本里的默认值。
+	var ship: Dictionary = current_ship()
+	bullet.body_polygon = PackedVector2Array(
+		ship.get("bullet_hull", bullet.body_polygon)
+	)
+	bullet.body_color = ship.get("bullet_color", bullet.body_color)
+	bullet.core_color = ship.get("bullet_core_color", bullet.core_color)
 	# 主弹幕**一律照直飞**：弹幕墙与拦截弹都依赖它保持竖直，追踪是另一路武器
 	# （见 _spawn_seeker）。把追踪做进主弹幕会让满配每秒 13.5 次射击全部命中，
 	# 敌方弹幕会被打到 0。

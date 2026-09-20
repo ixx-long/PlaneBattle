@@ -13,8 +13,17 @@ extends CPUParticles2D
 
 @onready var flash: Polygon2D = $Flash
 
+## **粒子被发射那一刻的位置**。它才是"爆炸画在哪里"的唯一依据，而不是节点当前的 position：
+## `one_shot` + `explosiveness=1` 会在 `emitting` 打开的那一瞬间把整批粒子按当时的坐标
+## 发射出去，之后再挪节点，粒子已经留在原地了。
+## 真机上踩过一次：生成顺序写成"先 add_child、再设坐标"，于是**所有爆炸都画在左上角 (0,0)**，
+## 而当时的断言查的是 `burst.global_position`——那个值是对的，所以一直绿着。
+## 这个字段就是给回归测试用的：它记录的是粒子真正被发射时的位置。
+var spawn_position: Vector2 = Vector2.ZERO
+
 func _ready() -> void:
 	add_to_group("explosion")
+	spawn_position = global_position
 	# one_shot 粒子在 emitting 置真后只播一轮，播完发 finished，这时才释放自己。
 	emitting = true
 	finished.connect(queue_free)

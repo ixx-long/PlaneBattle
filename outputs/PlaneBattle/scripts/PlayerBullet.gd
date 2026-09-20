@@ -22,16 +22,40 @@ extends Area2D
 ## **用颜色属性而不是 modulate**：modulate 是乘法，青色弹体乘橙色只会得到浑浊的绿，
 ## 第一版就是这么写的，结果导弹在截图里几乎看不见——"看得见"这件事得用真的颜色去保证。
 @export var body_color: Color = Color(0.02, 0.55, 0.67, 1)
+## 弹体亮芯的颜色。亮芯由 body_polygon 按比例缩小现算，所以换弹形不必再画一遍。
+@export var core_color: Color = Color(0.68, 0.96, 1, 1)
+## 弹形。**每台战机用它自己那一种**，由 Main 从 SHIPS 表里取过来（表是唯一来源）：
+## 标准型是短弩形、游隼型是细长镖形、追踪导弹是带尾翼的弹体。形状变了不会动判定，
+## 判定始终是场景里那个 8×20 的矩形——视觉可以有个性，命中盒不能有个性。
+@export var body_polygon: PackedVector2Array = PackedVector2Array(
+	[Vector2(0, -12), Vector2(4, -6), Vector2(4, 10), Vector2(-4, 10), Vector2(-4, -6)]
+)
+## 亮芯相对弹体的缩放。太小看不见，太大会盖掉弹体本身的轮廓。
+@export var core_scale: float = 0.55
 
 var spent: bool = false
 
 func _ready() -> void:
 	add_to_group("player_bullet")
 	area_entered.connect(_on_area_entered)
-	# 颜色在 _ready 里应用：Main 按项目约定在 add_child 之前写好导出值。
-	($Visual as Polygon2D).color = body_color
+	# 外观全部在 _ready 里应用：Main 按项目约定在 add_child 之前写好导出值。
+	var body := $Visual/Body as Polygon2D
+	body.polygon = body_polygon
+	body.color = body_color
+	var core := $Visual/Core as Polygon2D
+	core.polygon = _shrink(body_polygon, core_scale)
+	core.color = core_color
+	# 拦截弹的专属外观：只有"能击落敌弹"的子弹才带这圈光晕，所以它同时是一个状态指示。
+	($Visual/Shield as Polygon2D).visible = intercepts
 	# 机身图形朝上，所以按飞行方向旋转；direction 为正上方时旋转量恰好为 0。
 	rotation = direction.angle() + PI * 0.5
+
+func _shrink(points: PackedVector2Array, factor: float) -> PackedVector2Array:
+	# 亮芯按比例缩小现算，而不是在场景里再抄一份顶点：抄一份就意味着改弹形时要记得改两处。
+	var result := PackedVector2Array()
+	for point in points:
+		result.append(point * factor)
+	return result
 
 func _physics_process(delta: float) -> void:
 	if spent:

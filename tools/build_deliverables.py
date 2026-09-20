@@ -269,11 +269,12 @@ for filename, caption in [
     ('playing-preview.png', '02 / 战斗测试场景'),
     ('pause-preview.png', '03 / 暂停与设置面板'),
     ('effects-preview.png', '04 / 爆炸与受伤红闪'),
-    ('homing-preview.png', '05 / 追踪导弹（游隼型）'),
-    ('beam-preview.png', '06 / 贯穿光束（聚焦型）'),
-    ('boss-preview.png', '07 / Boss 与血条'),
-    ('levelup-preview.png', '08 / 升级抉择界面'),
-    ('gameover-preview.png', '09 / 结算界面'),
+    ('interceptor-preview.png', '05 / 拦截弹的专属光环'),
+    ('homing-preview.png', '06 / 追踪导弹（游隼型）'),
+    ('beam-preview.png', '07 / 贯穿光束（聚焦型）'),
+    ('boss-preview.png', '08 / Boss 与血条'),
+    ('levelup-preview.png', '09 / 升级抉择界面'),
+    ('gameover-preview.png', '10 / 结算界面'),
 ]:
     data = base64.b64encode((OUT / filename).read_bytes()).decode('ascii')
     screens.append('<figure><img src="data:image/png;base64,' + data + '" alt="' + caption + '"><figcaption>' + caption + '</figcaption></figure>')

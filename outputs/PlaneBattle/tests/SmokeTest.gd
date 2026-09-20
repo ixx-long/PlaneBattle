@@ -315,6 +315,7 @@ func _run() -> void:
 	ship_probe.queue_free()
 	await settle()
 	check(game.set_ship("parallel"), "切回默认战机")
+
 	check(game.player.hull.color == default_hull_color, "切回后配色恢复")
 
 	check(game.hud.start_button.visible and not game.player.active, "start menu and inactive player")
@@ -534,6 +535,101 @@ func _run() -> void:
 		not bundled.has_char(0x9F98),
 		"（对照）子集确实不包含生僻字，说明上面那条覆盖率断言不是恒真"
 	)
+
+	# --- 每台战机只用自己的弹体 ---
+	# 这一组守两件事：**弹体外观确实随战机切换**（形状 + 弹体色 + 亮芯色），以及
+	# **判定盒绝不跟着变**。后者是刻意钉死的：视觉可以有个性，命中盒有个性就等于
+	# "看得见"和"打得中"变成两件事——那是本项目反复吃亏的类型。
+	# 位置放在开局之后：这一段要走真实生成路径（_spawn_player_bullet 与追踪导弹发射），
+	# 而 READY 状态下 Main 的 _physics_process 会直接返回、追踪导弹根本不会发。
+	var bullet_profiles := {}
+	for ship_id in ["parallel", "homing"]:
+		game.set_ship(ship_id)
+		game._spawn_player_bullet(Vector2(240, 500))
+		await settle(2)
+		for entity in get_nodes_in_group("player_bullet"):
+			if not entity.homing:
+				var body := entity.get_node("Visual/Body") as Polygon2D
+				bullet_profiles[ship_id] = {
+					"polygon": body.polygon,
+					"body_color": body.color,
+					"core_color": (entity.get_node("Visual/Core") as Polygon2D).color,
+					"hitbox": (entity.get_node("CollisionShape2D") as CollisionShape2D).shape.size,
+				}
+		await clear_arena()
+	check(bullet_profiles.size() == 2, "两台出子弹的战机各生成了一颗子弹（夹具有效）")
+	if bullet_profiles.size() == 2:
+		check(
+			bullet_profiles["parallel"]["polygon"] != bullet_profiles["homing"]["polygon"],
+			"两台战机的弹体**形状**不同（不是同一颗子弹换个说法）"
+		)
+		check(
+			bullet_profiles["parallel"]["body_color"] != bullet_profiles["homing"]["body_color"]
+				and bullet_profiles["parallel"]["core_color"] != bullet_profiles["homing"]["core_color"],
+			"两台战机的弹体**配色**不同（各自与自己机身同族）"
+		)
+		check(
+			bullet_profiles["parallel"]["hitbox"] == bullet_profiles["homing"]["hitbox"]
+				and is_equal_approx(bullet_profiles["parallel"]["hitbox"].y, 20.0),
+			"（对照）弹形不同但**判定盒完全一致**：视觉有个性，命中盒不能有个性"
+		)
+	# 追踪导弹是**另一种弹体**，而不是主弹幕换色。它属于游隼型那一路武器，
+	# 所以轮廓写在 Main 的 SEEKER_HULL 常量里（与 SHIPS 的 bullet_hull 分开）。
+	game.set_ship("homing")
+	game._seeker_cooldown = 0.0
+	game._physics_process(0.016)
+	await settle(2)
+	var missile: Node = null
+	for entity in get_nodes_in_group("player_bullet"):
+		if entity.homing:
+			missile = entity
+	if missile != null:
+		var missile_body := missile.get_node("Visual/Body") as Polygon2D
+		check(
+			missile_body.polygon.size()
+				> bullet_profiles.get("homing", {}).get("polygon", PackedVector2Array()).size(),
+			"追踪导弹是带尾翼的另一种弹体（顶点比主弹幕多），不是主弹幕换色"
+		)
+		check(missile_body.color.r > missile_body.color.b, "追踪导弹是暖色（与青色主弹幕一眼可分）")
+	# --- 拦截弹的专属外观 ---
+	# 拦截弹是"所有子弹都能击落敌弹"这个状态，所以它的标记必须长在子弹上：
+	# 玩家要能一眼看出"现在我的弹幕能挡子弹了"。
+	await clear_arena()
+	game.set_ship("parallel")
+	game._bullet_intercepts = false
+	game._spawn_player_bullet(Vector2(240, 500))
+	await settle(2)
+	var unshielded_bullet: Node = null
+	for entity in get_nodes_in_group("player_bullet"):
+		unshielded_bullet = entity
+	check(
+		unshielded_bullet != null
+			and not (unshielded_bullet.get_node("Visual/Shield") as Polygon2D).visible,
+		"普通子弹不带拦截光环"
+	)
+	await clear_arena()
+	game.xp = 0
+	force_choose("interceptor")
+	game._spawn_player_bullet(Vector2(240, 500))
+	await settle(2)
+	var shielded: Node = null
+	for entity in get_nodes_in_group("player_bullet"):
+		if not entity.homing:
+			shielded = entity
+	check(
+		shielded != null and (shielded.get_node("Visual/Shield") as Polygon2D).visible,
+		"拿到拦截弹之后，生成的子弹带专属光环（能击落敌弹这件事看得见）"
+	)
+	check(
+		shielded != null
+			and is_equal_approx(
+				(shielded.get_node("CollisionShape2D") as CollisionShape2D).shape.size.y, 20.0
+			),
+		"（对照）拦截光环只是外观，判定盒没有跟着变大"
+	)
+	await clear_arena()
+	game._bullet_intercepts = false
+	game.set_ship("parallel")
 
 	# --- 游隼型的追踪导弹 ---
 	# **主弹幕一律照直飞，追踪是另一路武器。** 这是被数据逼出来的结构：
@@ -1522,7 +1618,14 @@ func _run() -> void:
 	var burst = bursts[0] if bursts.size() == 1 else null
 	check(
 		burst != null and burst.global_position.is_equal_approx(death_position),
-		"爆炸出现在敌机被击毁的位置"
+		"爆炸节点出现在敌机被击毁的位置"
+	)
+	# 只查节点位置是不够的：**粒子在 emitting 打开那一瞬间就定死了坐标**，事后挪节点没用。
+	# 真机上就是这么错的——生成顺序写成"先 add_child、再设坐标"，结果所有爆炸都画在左上角，
+	# 而上面那条查 global_position 的断言照样绿。所以这里查的是"粒子被发射时的位置"。
+	check(
+		burst != null and burst.spawn_position.is_equal_approx(death_position),
+		"爆炸**粒子**画在敌机被击毁的位置（不是节点事后被挪过去的）"
 	)
 	await create_timer(1.0).timeout
 	check(burst == null or not is_instance_valid(burst), "爆炸播放完自行释放")

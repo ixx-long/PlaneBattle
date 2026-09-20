@@ -41,12 +41,13 @@ func _run() -> void:
 		game.actors.add_child(enemy)
 	# 画三条平行弹道（与“火力增援”3 发一致）：全部竖直向上，只有水平位置不同。
 	# 这是本版弹道的直接视觉证据——一旦退回扇形发散，截图里立刻能看出来。
+	# **走真实生成路径**（_spawn_player_bullet）而不是自己 instantiate：弹体形状与配色
+	# 现在按战机切换，夹具自己造子弹就会绕过那一套、截出一张"不是游戏里那样子"的图。
 	for lane in [-1.0, 0.0, 1.0]:
 		for y in [510.0, 430.0]:
-			var bullet = load("res://scenes/PlayerBullet.tscn").instantiate()
-			bullet.position = Vector2(240.0 + lane * 14.0, y)
-			bullet.speed = 0.0
-			game.actors.add_child(bullet)
+			game._spawn_player_bullet(Vector2(240.0 + lane * 14.0, y))
+			var fired = game.actors.get_child(game.actors.get_child_count() - 1)
+			fired.speed = 0.0
 	var threat = load("res://scenes/EnemyBullet.tscn").instantiate()
 	threat.position = Vector2(340, 455)
 	threat.speed = 0.0
@@ -84,6 +85,22 @@ func _run() -> void:
 	game.screen_shake_enabled = true
 	# 等特效自行消散，免得它们跟着出现在后面几张截图里。
 	await create_timer(0.6).timeout
+
+	# 拦截弹的专属外观：**这张的存在理由是"看不看得见"**。拦截弹以前只是一个开关，
+	# 玩家拿完之后画面上没有任何变化；现在每颗子弹会带一圈拦截光环，所以它需要一张图，
+	# 否则"加了外观"和"没加"在截图里分不出来。
+	game._clear_entities()
+	game._bullet_intercepts = true
+	for lane in [-1.0, 0.0, 1.0]:
+		for y in [520.0, 440.0]:
+			game._spawn_player_bullet(Vector2(240.0 + lane * 14.0, y))
+			var shielded = game.actors.get_child(game.actors.get_child_count() - 1)
+			shielded.speed = 0.0
+	await create_timer(0.2).timeout
+	await capture("res://../interceptor-preview.png")
+	game._bullet_intercepts = false
+	game._clear_entities()
+	await create_timer(0.2).timeout
 
 	# 追踪导弹：切到游隼型，摆几架远处的敌机，等它按节奏发几轮导弹再截图。
 	# **这张的存在理由**：上一版把锁定射程压到 110 像素来保平衡，数据上完全达标，
