@@ -96,6 +96,8 @@ git push origin gh-pages                   # 推上去；首次还需在仓库 S
 
 导出时**必须关掉线程支持**（`variant/thread_support=false`）：带线程的 Web 导出要求服务器发 COOP/COEP 两个响应头，GitHub Pages 发不了，页面会一直卡在加载。
 
+> **改了版重新发布后请让对方强刷（Ctrl+F5 / Cmd+Shift+R）。** GitHub Pages 会给 `index.pck` / `index.wasm` 带上缓存头，而这两个文件名不随版本变化，所以浏览器可能还在用旧的那一份——"我明明改了，别人打开还是旧的"多半是这件事，不是没推上去。
+
 ## 项目结构
 
 ```text
