@@ -102,21 +102,24 @@ func _run() -> void:
 	game._clear_entities()
 	await create_timer(0.2).timeout
 
-	# 追踪导弹：切到游隼型，摆几架远处的敌机，等它按节奏发几轮导弹再截图。
+	# 追踪导弹：切到游隼型，摆几架**锁定射程之内**的敌机，按住开火再截图。
 	# **这张的存在理由**：上一版把锁定射程压到 110 像素来保平衡，数据上完全达标，
 	# 但那个距离几乎贴着玩家、**玩家根本看不见追踪**（真人试玩直接反馈"没有追踪效果"）。
 	# 所以"追踪看得见"必须自己有一张图，而不是只靠平衡数字。
+	# 现在导弹是**唯一武器**、并且只在锁定射程（420）内锁定，所以敌机要摆在射程里，
+	# 而且必须**按住开火**——不按开火这台战机什么都不发（这一版的核心规则）。
 	game.set_ship("homing")
-	for spot in [Vector2(120, 210), Vector2(360, 300), Vector2(240, 170)]:
+	for spot in [Vector2(110, 300), Vector2(370, 420), Vector2(250, 260)]:
 		var target_enemy = load("res://scenes/Enemy.tscn").instantiate()
 		target_enemy.position = spot
 		target_enemy.speed = 0.0
 		game.actors.add_child(target_enemy)
-	game._seeker_cooldown = 0.0
-	# 0.5 秒后截图：导弹正好在飞行途中。太晚的话它已经命中目标消失，图上什么都看不到
-	# ——第一版就是这么截的，看起来像"追踪没做出来"，而其实是拍晚了。
-	await create_timer(0.5).timeout
+	Input.action_press("shoot")
+	# 0.4 秒后截图：此时已经放了两三发、每一发都在飞向各自不同的目标（图上也就能看出
+	# "一枚导弹锁一个目标"这件事）。拍太晚它们已经命中消失，图上什么都没有。
+	await create_timer(0.4).timeout
 	await capture("res://../homing-preview.png")
+	Input.action_release("shoot")
 	# 收尾：换回标准型并清场，免得这些敌机跟着出现在 Boss 截图里。
 	game.set_ship("parallel")
 	game._clear_entities()
@@ -137,8 +140,12 @@ func _run() -> void:
 		flanking.position = spot
 		flanking.speed = 0.0
 		game.actors.add_child(flanking)
-	await create_timer(0.3).timeout
+	# **按下开火才有一串激光**：这一版光柱不再常驻，不按开火截图就是一片空白。
+	# 一串只有 0.45 秒，所以按下去之后要**很快**截图（0.15 秒），否则会拍到串间的间隔。
+	Input.action_press("shoot")
+	await create_timer(0.15).timeout
 	await capture("res://../beam-preview.png")
+	Input.action_release("shoot")
 	game._bullet_count = 1
 	game.set_ship("parallel")
 	game._clear_entities()

@@ -245,13 +245,13 @@ func _run() -> void:
 	var ship_ids := {}
 	var ships_well_formed := true
 	for entry in game.SHIPS:
-		for key in ["id", "name", "detail", "seeker_interval", "seeker_speed_scale",
+		for key in ["id", "name", "detail", "main_weapon", "seeker_interval", "seeker_speed_scale",
 				"seeker_turn_rate", "seeker_lock_range", "hull",
 				"hull_color", "cockpit_color", "engine_color"]:
 			if not entry.has(key):
 				ships_well_formed = false
 		ship_ids[entry["id"]] = true
-	check(ships_well_formed, "每台战机都带齐 id/名称/说明/武器行为/外形与配色")
+	check(ships_well_formed, "每台战机都带齐 id/名称/说明/主武器类型/武器行为/外形与配色")
 	check(ship_ids.size() == game.SHIPS.size(), "战机 id 互不重复")
 	check(game.ship_id == "parallel", "默认战机是平行弹幕")
 	check(not game.ship_has_seekers(), "默认战机不发射追踪导弹")
@@ -636,7 +636,7 @@ func _run() -> void:
 	# 若每发子弹都追踪，满配每秒 13.5 次射击会全部命中，实测把敌方弹幕打到 0；
 	# 而"只在近距离锁定"虽然保住了威胁，却小到玩家看不见（真人试玩反馈"没有追踪效果"）。
 	# 量清边界确认两者直接冲突（射程 110 → 15.33 达标、150 → 11.67 掉线），
-	# 于是改成：主弹幕照直 + 少量、全屏锁定、明显可辨的导弹，用发射节奏控平衡。
+	# 于是改成：**只出导弹、按下开火才发射**，用发射冷却控平衡。
 	game.set_ship("homing")
 	game.player.position = Vector2(240, 650)
 	var target_enemy = make_enemy(Vector2(200, 300))
@@ -644,37 +644,61 @@ func _run() -> void:
 	var marker: Node2D = game.get_tree().get_first_node_in_group("player_target")
 	check(
 		marker != null and marker.global_position.distance_to(target_enemy.global_position) < 1.0,
-		"追踪导弹是全屏锁定的：远处的敌机也会被指示器锁定"
+		"锁定射程内的敌机会被指示器锁定"
 	)
-	# 主弹幕必须仍然是直的，否则弹幕墙与拦截弹都会被破坏。
-	# 注意追踪导弹和主弹幕在同一个组里，所以这里**按 homing 标志区分**，不能整组断言。
+	# **锁定射程是真实限制**：远处的敌机不该被锁定，否则"必须主动上前"这条代价就没了。
+	# （它和光柱的射程是同一套设计语言：两台高输出战机都要付出"够不着远处"的代价。）
+	await clear_arena()
+	var far_target = make_enemy(Vector2(240, 120))
+	game._physics_process(0.0)
+	check(
+		game.get_tree().get_first_node_in_group("player_target") == null,
+		"锁定射程之外的敌机不会被锁定（导弹战机因此必须主动上前）"
+	)
+	far_target.position = Vector2(240, 300)
+	game._physics_process(0.0)
+	check(
+		game.get_tree().get_first_node_in_group("player_target") != null,
+		"（对照）同一架敌机进入锁定射程后立刻被锁定"
+	)
+	await clear_arena()
+	target_enemy = make_enemy(Vector2(200, 300))
+	game._physics_process(0.0)
+	# **主武器就是导弹**：这台战机不再出任何普通子弹。这条断言是这次改动的核心。
+	game._seeker_cooldown = 0.0
 	game._on_player_shoot_requested(game.player.position)
 	await settle(2)
-	var stream_ok := true
 	var stream_count: int = 0
+	var seeker_count: int = 0
 	for entity in get_nodes_in_group("player_bullet"):
 		if entity.homing:
-			continue
-		stream_count += 1
-		if not entity.direction.is_equal_approx(Vector2.UP):
-			stream_ok = false
-	check(stream_ok and stream_count > 0, "游隼型的主弹幕照直飞，不追踪（弹幕墙与拦截弹因此不受影响）")
-
-	# 追踪导弹：按节奏单独发射，带追踪标志、并且真的会拐弯。
-	# 用"调用前后各数一次"而不是绝对数量：await 期间引擎自己也会推进物理帧、
-	# 可能已经发过几发，写死数量会莫名其妙地失败。
-	var before_seekers: int = 0
+			seeker_count += 1
+		else:
+			stream_count += 1
+	check(stream_count == 0, "游隼型不出普通子弹：按下开火只放导弹")
+	check(seeker_count == 1, "按下开火发射一枚跟踪弹（不是每帧都发）")
+	# 发射冷却没走完时不再发射：导弹必中，射速就是这台战机的平衡支点。
+	var guarded_before: int = seeker_count
+	game._on_player_shoot_requested(game.player.position)
+	await settle(2)
+	var guarded_after: int = 0
 	for entity in get_nodes_in_group("player_bullet"):
 		if entity.homing:
-			before_seekers += 1
+			guarded_after += 1
+	check(
+		guarded_after == guarded_before,
+		"发射冷却没走完时不会多放导弹（节奏就是平衡支点）"
+	)
+	# 冷却走完之后可以再放一发：证明它确实是"按开火发射 + 冷却"，而不是一次性的。
 	game._seeker_cooldown = 0.0
-	game._physics_process(0.016)
-	var after_seekers: int = 0
+	game._on_player_shoot_requested(game.player.position)
+	await settle(2)
+	var after_wait: int = 0
 	for entity in get_nodes_in_group("player_bullet"):
 		if entity.homing:
-			after_seekers += 1
-	check(after_seekers == before_seekers + 1, "追踪导弹按节奏发射（一次只发一发，不是每发主弹幕都追踪）")
-	var seeker = null
+			after_wait += 1
+	check(after_wait == guarded_after + 1, "冷却走完后可以再发射一枚")
+	var seeker: Node = null
 	for entity in get_nodes_in_group("player_bullet"):
 		if entity.homing:
 			seeker = entity
@@ -686,14 +710,6 @@ func _run() -> void:
 			"追踪导弹在飞行中改变了方向（玩家能看见它在拐弯）"
 		)
 		check(seeker.scale.x > 1.0, "追踪导弹比主弹幕更大，玩家一眼能认出来")
-	# 节奏由数据决定：冷却未走完时不再发射。
-	game._seeker_cooldown = 99.0
-	var guarded_before: int = get_nodes_in_group("player_bullet").size()
-	game._physics_process(0.016)
-	check(
-		get_nodes_in_group("player_bullet").size() == guarded_before,
-		"冷却没走完时不会额外发射追踪导弹（节奏就是平衡支点）"
-	)
 	await clear_arena()
 
 	# 平行弹幕战机不该有任何追踪导弹。
@@ -713,15 +729,34 @@ func _run() -> void:
 	await clear_arena()
 
 	# --- 聚焦型的光束 ---
-	# 光束**不是子弹**：它是一条持续存在的竖直致命光柱，敌机一进入就在下一次结算时
-	# 被击毁（没有飞行时间）。代价是覆盖窄，所以它反而比标准型更"有威胁"。
+	# 光束**不是子弹**：它是一条竖直致命光柱，敌机一进入就在下一次结算时被击毁（没有飞行时间）。
+	# **但它不再是常驻光环**：按下开火才打出一串，两串之间留间隔——所以下面每段都要先"开火"。
 	game.set_ship("focus")
 	check(game.ship_uses_beam(), "聚焦型使用光束")
 	game._physics_process(0.016)
+	# 第一条断言先守住"不开火就没有光柱"：这是这一版最容易退回去的地方。
+	check(
+		game.beams.is_empty(),
+		"没按开火时光柱不存在（它是武器，不是开机就常驻的光环）"
+	)
+	game._on_player_shoot_requested(game.player.position)
+	game._physics_process(0.016)
+	check(game.beam_firing(), "按下开火后进入一串激光")
 	check(
 		game.beams.size() == game.lane_count(),
 		"光束条数等于车道数（多发与侧翼炮在这台战机上含义不变）"
 	)
+	# **一串的生命周期**先在这里验完（短、自成一段），后面整段测试再把这一串拉长：
+	# 本段有很多 `await settle()`，加起来远超一串的时长，不拉长的话断言会撞上"串正好结束"。
+	var burst_seconds: float = game.beam_burst_seconds()
+	var gap_seconds: float = game.beam_burst_gap()
+	await create_timer(burst_seconds + gap_seconds + 0.1).timeout
+	check(not game.beam_firing() and game.beams.is_empty(), "一串打完、间隔走完之后光柱消失")
+	game._on_player_shoot_requested(game.player.position)
+	game._physics_process(0.016)
+	check(game.beam_firing(), "再按一次开火可以接着打下一串")
+	# （测试夹具）把这一串拉长到远超本段测试的总时长，免得断言中途串结束。
+	game._beam_burst_left = 999.0
 	game.player.position = Vector2(240, 650)
 	game._physics_process(0.016)
 	var lane_offsets: Array[float] = game._lane_offsets()
@@ -827,20 +862,49 @@ func _run() -> void:
 		"局中拿到弹速强化后，已存在的光柱立刻换到新节奏（不是只对新光柱生效）"
 	)
 	check(game.beam_tick_interval() >= 0.03, "结算间隔有下限，堆再多也不会变成 0")
-	# 每秒伤害必须按光柱口径折算进 Boss 血量公式，否则 Boss 会按一个偏低的输出算血量、
-	# 死得比 boss_target_seconds 快得多。
+	# 每秒伤害必须按光柱口径折算进 Boss 血量公式，否则 Boss 会按一个偏低（现在也可能偏高）的
+	# 输出算血量。**占空比必须在这一项里**：光柱改成"一串一串"之后，实际输出只有
+	# 车道数 ÷ 结算间隔 的七八成，不折算的话 Boss 会按"一直亮着"的血量出场、被拖长。
 	check(
-		is_equal_approx(game.player_dps_proxy(), float(game.lane_count()) / game.beam_tick_interval()),
-		"光束的每秒伤害按“光柱条数 × 每秒结算次数”折算，Boss 血量才不会算低"
+		is_equal_approx(
+			game.player_dps_proxy(),
+			float(game.lane_count()) / game.beam_tick_interval() * game.beam_duty()
+		),
+		"光束的每秒伤害按“条数 × 结算次数 × 占空比”折算，Boss 血量才不会算错"
 	)
+	check(
+		game.beam_duty() > 0.5 and game.beam_duty() < 1.0,
+		"（对照）占空比确实小于 1：光柱是一串一串的，不是常亮的"
+	)
+	# 弹体增幅对光柱是死选项（没有弹体可放大，且 width 是平衡支点），因此不提供；
+	# 对照：标准型仍然提供——挡掉死选项不能连带把正常选项也挡了。
+	check(not game.is_upgrade_offered("caliber"), "弹体增幅对光束是死选项，因此不提供")
 	# 穿透弹则确实没有意义：光柱本来就穿透整列敌人。**不提供**胜过提供一个选了没变化的。
 	check(not game.is_upgrade_offered("pierce"), "穿透弹对光束是死选项，因此不提供")
+	# 对照：同两项在标准型上必须仍然提供，否则"挡死选项"就变成了"把选项池削光"。
+	game.set_ship("parallel")
+	check(
+		game.is_upgrade_offered("caliber") and game.is_upgrade_offered("pierce"),
+		"（对照）标准型仍然提供弹体增幅与穿透弹"
+	)
+	game.set_ship("homing")
+	check(
+		not game.is_upgrade_offered("multishot")
+			and not game.is_upgrade_offered("wing_shot")
+			and not game.is_upgrade_offered("pierce")
+			and not game.is_upgrade_offered("interceptor"),
+		"导弹战机不提供火力增援 / 侧翼炮 / 穿透弹 / 拦截弹（前三个没变化，拦截弹会拆自己的台）"
+	)
+	check(
+		game.is_upgrade_offered("rapid_fire") and game.is_upgrade_offered("caliber"),
+		"（对照）导弹战机仍然提供射速强化（缩短发射冷却）与弹体增幅（导弹更大）"
+	)
+	game.set_ship("focus")
 	# 换回非光束战机后光柱必须消失。
 	check(not game.beams.is_empty(), "（前置）此时光柱确实存在，下面的清空断言才有意义")
 	game.set_ship("parallel")
 	game._physics_process(0.016)
 	check(game.beams.is_empty(), "换回标准型后光柱消失")
-	check(game.is_upgrade_offered("pierce"), "（对照）标准型仍然提供穿透弹")
 	await clear_arena()
 
 	# 前面那些敌机是夹具（为了让指示器有目标、也为了腾地方），但它们走的是真实的

@@ -51,8 +51,6 @@ const SETTINGS_SHAKE: String = "screen_shake"
 const SETTINGS_MUSIC: String = "music_percent"
 const SETTINGS_SFX: String = "sfx_percent"
 const SETTINGS_SHIP: String = "ship"
-## 光束战机的持续音效间隔。射击键每秒触发 6 次以上，照搬会把背景音乐盖掉。
-const BEAM_HUM_INTERVAL: float = 0.45
 
 ## 升级时的基础选项数；“幸运补给”每层再多给 1 个。
 const BASE_OFFERS: int = 4
@@ -99,6 +97,10 @@ const SHIPS: Array[Dictionary] = [
 		"id": "parallel",
 		"name": "标准型",
 		"detail": "平行弹幕 · 每级一条竖直车道，弹幕墙能靠拦截弹清掉敌弹",
+		# **主武器类型**是这台战机"怎么开火"的唯一口径：bullet / seeker / beam。
+		# 它同时决定了升级池怎么过滤（死选项不给）与每秒伤害怎么折算（Boss 血量按它反推），
+		# 因此必须是表里的一个字段，而不是散在代码里的几个布尔量。
+		"main_weapon": "bullet",
 		"seeker_interval": 0.0,
 		"seeker_speed_scale": 1.0,
 		"seeker_turn_rate": 0.0,
@@ -122,24 +124,38 @@ const SHIPS: Array[Dictionary] = [
 	{
 		"id": "homing",
 		"name": "游隼型",
-		"detail": "追踪导弹 · 主弹幕照直飞，另按节奏射出全屏追踪弹",
-		# **seeker_interval 是这台战机的平衡支点，不是手感参数**，改它必须重跑威胁基准。
+		"detail": "追踪导弹 · 不出普通弹幕，按下开火只发射跟踪弹；锁定射程 420",
+		# **主武器 = 追踪导弹**：这台战机**不出普通子弹**，按开火只放导弹。
+		# 改动的理由是结构性的：既然形态的全部意义就是"导弹"，再挂一条直弹幕只会让
+		# 两台战机看起来一样，也让"机动 vs 弹幕墙"这个取舍变模糊。
 		#
-		# 走过的弯路值得完整记下来，因为它推翻了两版设计：
-		#   版一"每发子弹都追踪"：基准实测击毁率 96%、每架开火 0.00、到达/秒 0。
-		#   原因是结构性的——敌机朝玩家下来，只要射程不受限，追踪一定撞得上；而满配
-		#   每秒 148 发、在飞约 170 发，上半屏会被整个清空。
-		#   版二"只在 110 像素内锁定"：威胁回来了（15.33 达标），但 110 像素几乎贴着玩家，
-		#   **玩家根本看不见追踪**——真人试玩直接反馈"没有追踪效果"，等于功能没做出来。
-		#   量清边界后确认：射程 110 → 15.33 达标、150 → 11.67 掉线，**可见与有威胁直接冲突，
-		#   调参救不了**。
-		# 所以改成现在这样：**主弹幕照直（弹幕墙与拦截弹不受影响），追踪由少量、全屏锁定、
-		# 明显可辨的导弹提供**，用发射节奏控制总输出。可见性来自"导弹本身显眼"，而不是
-		# 来自放宽锁定范围。
-		"seeker_interval": 1.4,
-		"seeker_speed_scale": 0.7,
-		"seeker_turn_rate": 6.0,
-		"seeker_lock_range": 900.0,
+		# **节奏仍然是这台战机的平衡支点**：导弹全屏锁定 + 必中，只要射速放开，进场的敌机
+		# 会在开火窗口之前就被打掉——早期实测"每发都追踪"时敌方弹幕到达量归零
+		# （击毁率 96%、到达每秒 0）。所以现在的规则是：**按开火才发射，且两次发射之间有
+		# 发射间隔**（seeker_interval 从"自动节奏"变成"发射冷却"），射速强化按比例缩短它。
+		# 同时**火力增援 / 侧翼炮 / 穿透弹对这台战机不提供**：前两者加的是"车道"，
+		# 而导弹是单发必中；穿透弹是明确被否掉的设计（一发连杀 4 架，实测把击毁率
+		# 从 56% 推到 80%）。给一个"选了没变化"的选项比不给更糟，所以由 is_upgrade_offered 挡掉。
+		# 改 seeker_interval 必须重跑威胁基准与追击基准。
+		"main_weapon": "seeker",
+		"seeker_interval": 0.26,
+		# 速度与转向：**这台战机只有导弹**，所以"打不着"就等于没输出。0.7 倍弹速时
+		# 追击基准实测击毁率 60%（标准型 80%）——敌机从旁边掠过时导弹追不上就白费了。
+		# 提到接近弹速、转向也调快一格之后才追平；这两个值与 seeker_interval 一起构成
+		# 这台战机的输出三件套，改任何一个都要重跑基准。
+		"seeker_speed_scale": 0.95,
+		"seeker_turn_rate": 7.5,
+		# **锁定射程是这台战机的平衡支点，不是手感参数**。理由是一对互相拉扯的实测：
+		#   · 射速高（0.12 秒一发）时追击基准达标（前场击毁率与另两台持平），
+		#     但**静态威胁基准直接崩掉**——D30 只剩 3.5 发/秒到达（门槛 12），
+		#     因为全屏锁定 + 必中把屏幕清空了；
+		#   · 射速低（0.16 秒一发）时威胁回来了（29 发/秒），前场又打不够（60% 对 80%）。
+		# 也就是说：**只靠射速这一个旋钮，这台战机只能在"太弱"和"清屏"之间二选一**。
+		# 真正缺的杠杆是射程——它决定了"能打到多远"，而射速只决定"打得有多快"。
+		# 现在把锁定射程收到 420：玩家必须像聚焦型一样**主动上前**，远处的敌机因此
+		# 活得到开火（威胁基准达标），而逼近之后照样能把前场打穿（追击基准达标）。
+		# 400~460 之间都试过，420 让两条基准同时留有余量。
+		"seeker_lock_range": 420.0,
 		"beam": false,
 		"beam_width": 0.0,
 		"beam_range": 0.0,
@@ -158,8 +174,12 @@ const SHIPS: Array[Dictionary] = [
 	{
 		"id": "focus",
 		"name": "聚焦型",
-		"detail": "贯穿光束 · 出膛即中，射程内的敌机进柱即毁；代价是覆盖窄、够不着远处",
+		"detail": "贯穿光束 · 按下开火打出一串激光，射程内进柱即毁；覆盖窄、够不着远处",
 		# 光束**不是子弹**：没有飞行时间，敌机一进入这条竖线就在下一次结算时被击毁。
+		# **但它不再是常驻光环**：按下开火才打出一串（`beam_burst_seconds` 秒），两串之间
+		# 留一小段间隔（`beam_burst_gap_seconds`）——真人反馈"一直亮着不像在开火"。
+		# 按住开火就是一串接一串，因此它仍然是一条武器，而不是一个开关。
+		"main_weapon": "beam",
 		# 两项代价缺一不可：
 		#   ① 覆盖窄——每条光柱只有 beam_width 像素宽；
 		#   ② **射程短**——光柱只延伸到玩家上方 beam_range 像素处，不再直达战斗区顶边。
@@ -186,6 +206,15 @@ const SHIPS: Array[Dictionary] = [
 		# 这是有意的而不是漏了：给它编一套永远用不上的弹体才是真的误导。
 		# _spawn_player_bullet() 里的默认值负责兜底（万一以后改成"光柱 + 子弹"）。
 		"beam_tick_interval": 0.08,
+		# **一串激光的时长与串间间隔**。它们决定了这台战机的实际占空比：
+		# 占空比 = 时长 ÷（时长 + 间隔），而每秒伤害 = 车道数 ÷ 结算间隔 × 占空比，
+		# 这个值会进 player_dps_proxy()，所以 Boss 血量会跟着一起变小——
+		# 换言之"把光柱改成断续"不会让 Boss 战变长，只是把输出和血量一起按比例缩放。
+		# 射速强化缩短的是间隔（见 beam_burst_gap()），因此它是这台战机上真实有效的能力。
+		"beam_burst_seconds": 0.45,
+		"beam_burst_gap_seconds": 0.14,
+		# **弹体增幅对这台战机不提供**：光柱没有"弹体"可放大，而把 width 交给升级去动
+		# 等于把它的平衡支点交出去（覆盖窄正是这台战机的代价）。死选项一律不给。
 		"seeker_interval": 0.0,
 		"seeker_speed_scale": 1.0,
 		"seeker_turn_rate": 0.0,
@@ -320,8 +349,10 @@ var _target_marker: Marker2D
 ## 追踪导弹的发射冷却。用累加器而不是 Timer：它的周期完全由当前战机的数据决定，
 ## 换战机时不必去 reschedule 一个节点，也不会在换局时留下未触发的回调。
 var _seeker_cooldown: float = 0.0
-## 光束战机的持续音效节奏计数（见 BEAM_HUM_INTERVAL）。
-var _beam_hum_left: float = 0.0
+## 一串激光的剩余时长与串间剩余间隔（见 _update_beam_burst）。
+## 两个计时器都在 _physics_process 里走，开火请求只负责"开始一串"。
+var _beam_burst_left: float = 0.0
+var _beam_gap_left: float = 0.0
 ## 当前战机在场上的光束。与 bullets 不同，光束是**常驻节点**而不是每次射击生成，
 ## 所以 Main 持有一个数组、按车道数增减（见 _sync_beams）。
 var beams: Array[Area2D] = []
@@ -406,15 +437,18 @@ func player_dps_proxy() -> float:
 	# “每秒能打出多少发”就是玩家当前的输出强度：本作所有敌机都是一发击毁，
 	# 所以伤害与弹幕密度完全等价，不需要另算伤害公式。
 	#
-	# 追踪导弹**不需要额外折算**：它仍然是"每发子弹 × 每秒发数"，只是弹道会拐弯，
-	# 因此 Boss 血量自动就是对的。
-	#
-	# 光束**必须**在这里折算，否则 Boss 会按一个偏低的输出算血量、死得比
-	# boss_target_seconds 快得多：它没有子弹，输出 = 光柱条数 × 每秒结算次数。
+	# 三种主武器各有各的折算，**一台战机只走其中一条**：
+	#   · bullet：车道数 ÷ 射击冷却（一发子弹一次伤害）；
+	#   · seeker：1 ÷ 发射冷却。导弹是**单发目标**（不继承穿透），所以每次发射只等于一次伤害，
+	#     不能按车道数算——那会把 Boss 血量算成命中不了的输出，Boss 反而变得打不动；
+	#   · beam：车道数 ÷ 结算间隔 × **占空比**。光柱改成断续之后，占空比不进这个公式的话，
+	#     Boss 会按"一直亮着"的血量出场，实际输出只有七八成，Boss 战会被拖长。
 	if ship_uses_beam():
-		return float(lane_count()) / maxf(beam_tick_interval(), 0.01)
-	var per_shot: float = float(lane_count())
-	return per_shot / maxf(player.shoot_cooldown, 0.01)
+		return float(lane_count()) / maxf(beam_tick_interval(), 0.01) * beam_duty()
+	if ship_uses_seekers():
+		# 实际发射节奏还受开火冷却限制，所以取两者的更慢那个。
+		return 1.0 / maxf(seeker_launch_interval(), maxf(player.shoot_cooldown, 0.01))
+	return float(lane_count()) / maxf(player.shoot_cooldown, 0.01)
 
 func current_ship() -> Dictionary:
 	for entry in SHIPS:
@@ -432,10 +466,53 @@ func selected_ship_index() -> int:
 	return 0
 
 func ship_has_seekers() -> bool:
+	# "这台战机会不会用追踪导弹"。现在它等价于"主武器就是导弹"，
+	# 但保留成独立函数是因为它回答的是武器表的问题，而不是主武器的问题。
 	return float(current_ship().get("seeker_interval", 0.0)) > 0.0
 
+func ship_main_weapon() -> String:
+	# **"这台战机怎么开火"的唯一口径**：bullet / seeker / beam。
+	# 升级池的过滤与每秒伤害的折算都看它，所以它是表里的一个字段，不是散落的布尔量。
+	return str(current_ship().get("main_weapon", "bullet"))
+
+func ship_uses_seekers() -> bool:
+	return ship_main_weapon() == "seeker"
+
 func ship_uses_beam() -> bool:
-	return bool(current_ship().get("beam", false))
+	return ship_main_weapon() == "beam"
+
+func beam_burst_seconds() -> float:
+	return maxf(0.05, float(current_ship().get("beam_burst_seconds", 0.45)))
+
+func beam_burst_gap() -> float:
+	# 射速强化在这台战机上缩短的是**串与串之间的间隔**（不是结算间隔——那是弹速强化的事）。
+	# 间隔越短占空比越高、每秒伤害越高，所以它是这台战机上真实有效的能力，而不是死选项。
+	# 有下限：不然叠满之后"断续"这件事会消失，又变回一条常驻光柱。
+	return maxf(
+		0.05,
+		float(current_ship().get("beam_burst_gap_seconds", 0.14))
+			* pow(0.88, float(_stacks_of("rapid_fire")))
+	)
+
+func beam_duty() -> float:
+	# 占空比 = 一串的时长 ÷ 一个完整周期。它是"光柱改成断续"之后**必须**进每秒伤害的那一项：
+	# 不进的话 Boss 血量会按满占空比算，而实际输出只有七八成，Boss 战就会莫名其妙变长。
+	var burst: float = beam_burst_seconds()
+	return burst / (burst + beam_burst_gap())
+
+func seeker_launch_interval() -> float:
+	# 两次**发射**之间的冷却（不是自动节奏）：导弹全屏锁定 + 必中，射速放开就等于清屏，
+	# 所以射速强化在这里按比例缩短冷却，且有硬下限。
+	#
+	# **下限 0.12 是量出来的**：这台战机的输出几乎等于它的发射率（场上没有别的武器），
+	# 而敌人从旁边掠过时再准的导弹也会扑空，实际击毁率只有发射率的七八成。
+	# 下限停在 0.16 时追击基准击毁率 60%（标准型 80%）——差距大到越过了"三台不许差一倍"
+	# 的守卫；放到 0.12 才追平，同时威胁基准仍然达标（漏过来的敌弹反而还比标准型多）。
+	return maxf(
+		0.12,
+		float(current_ship().get("seeker_interval", 0.26))
+			* pow(0.9, float(_stacks_of("rapid_fire")))
+	)
 
 func beam_tick_interval() -> float:
 	# “弹速强化”在光束战机上映射为**充能更快**：缩短结算间隔 = 提高每秒伤害
@@ -481,7 +558,8 @@ func _lane_offsets() -> Array[float]:
 func _sync_beams() -> void:
 	# 光束的条数与水平位置**照抄子弹车道的算法**，这样两台战机的升级含义一致，
 	# 平衡对比也干净：差别只在“瞬间命中”与“覆盖宽窄”，而不在车道布局。
-	var wanted: int = lane_count() if (ship_uses_beam() and state == GameState.PLAYING) else 0
+	# **是否在屏幕上由 beam_firing() 决定**：它不是常驻光环，而是按下开火才出现的一串激光。
+	var wanted: int = lane_count() if beam_firing() else 0
 	while beams.size() > wanted:
 		var extra = beams.pop_back()
 		if is_instance_valid(extra):
@@ -587,19 +665,54 @@ func _update_target_marker() -> void:
 		_release_target()
 
 func _update_seeker_launcher(delta: float) -> void:
-	# 追踪导弹按固定节奏发射，**不是每发子弹都追踪**：满配每秒 13.5 次射击，若每发都
-	# 追踪，敌方弹幕会被打到 0（实测击毁率 96%、到达每秒 0）。节奏是这台战机的平衡支点。
-	var interval: float = float(current_ship().get("seeker_interval", 0.0))
-	if interval <= 0.0:
-		return
-	_seeker_cooldown -= delta
-	if _seeker_cooldown > 0.0:
-		return
-	# 没有目标就不发射：打空气既没有意义，也会让"射程/节奏"的实测变得不可解释。
-	if get_tree().get_first_node_in_group("player_target") == null:
-		return
-	_seeker_cooldown = interval
-	_spawn_seeker()
+	# 这里**只走冷却**，不再自动发射：导弹现在由开火请求触发（见 _on_player_shoot_requested）。
+	# 旧版本是"有目标就按节奏自动打"，玩家不用按开火——那让这台战机看起来在自己玩。
+	_seeker_cooldown = maxf(0.0, _seeker_cooldown - delta)
+
+func _update_beam_burst(delta: float) -> void:
+	# 一串激光的状态机：先放 burst 秒，再等 gap 秒，然后才允许下一串。
+	# 两个计时器都只在这里走，开火请求只负责"开始一串"。
+	if _beam_burst_left > 0.0:
+		_beam_burst_left = maxf(0.0, _beam_burst_left - delta)
+		if _beam_burst_left <= 0.0:
+			_beam_gap_left = beam_burst_gap()
+	elif _beam_gap_left > 0.0:
+		_beam_gap_left = maxf(0.0, _beam_gap_left - delta)
+
+func beam_firing() -> bool:
+	# 光柱此刻该不该在屏幕上。它同时被"是否在放一串"和"是否在游戏里"决定。
+	return ship_uses_beam() and _beam_burst_left > 0.0 and state == GameState.PLAYING
+
+func _pick_seeker_target() -> Node2D:
+	# **给这一枚导弹挑一个还没有导弹在飞的目标**，没有这样的目标时才退回最近的那一个。
+	#
+	# 为什么必须这么做：导弹是全屏锁定 + 必中，如果所有导弹都追"最近的那架敌机"，
+	# 第一枚把它打掉之后，后面几枚全都扑向一个空位置——实测这让满配的击毁率只有 25%，
+	# 而发射节奏本该支撑 80%。**这不是调参问题，是目标分配问题**。
+	# 退回最近目标是为了让"只剩一个目标"时（比如 Boss 战）仍然可以多枚齐发。
+	# 只在发射那一刻扫一次（每秒 4~6 次），不是每帧，所以这点开销可以忽略。
+	var inbound := {}
+	for missile in get_tree().get_nodes_in_group("player_seeker"):
+		if not is_instance_valid(missile) or missile.is_queued_for_deletion():
+			continue
+		var claimed = missile.target_enemy
+		if claimed != null and is_instance_valid(claimed):
+			inbound[claimed.get_instance_id()] = true
+	var free_target: Node2D = null
+	var any_target: Node2D = null
+	var best_free: float = INF
+	var best_any: float = INF
+	for enemy in get_tree().get_nodes_in_group("enemy"):
+		if not is_instance_valid(enemy) or enemy.is_queued_for_deletion():
+			continue
+		var distance: float = enemy.global_position.distance_squared_to(player.global_position)
+		if distance < best_any:
+			best_any = distance
+			any_target = enemy
+		if not inbound.has(enemy.get_instance_id()) and distance < best_free:
+			best_free = distance
+			free_target = enemy
+	return free_target if free_target != null else any_target
 
 func _spawn_seeker() -> void:
 	var bullet = PLAYER_BULLET_SCENE.instantiate()
@@ -607,11 +720,25 @@ func _spawn_seeker() -> void:
 	bullet.homing = true
 	bullet.homing_turn_rate = float(current_ship().get("seeker_turn_rate", 6.0))
 	bullet.play_area_top = play_area_top
+	# 每枚导弹锁自己的目标（见 _pick_seeker_target）。
+	bullet.target_enemy = _pick_seeker_target()
 	# 导弹是**单发目标**，刻意不继承穿透：继承之后一发能连杀 4 架（穿透×3 时），
 	# 实测把击毁率从 56% 推到 80%、威胁掉到 9.17。单发目标同时让"发射节奏 → 击杀数"
 	# 变成一比一，平衡才好预测。
 	bullet.pierce_left = 0
-	bullet.intercepts = _bullet_intercepts
+	# **导弹不继承拦截弹**。这一条是量出来的，不是设计洁癖：导弹全屏锁定、必然穿越整片
+	# 敌弹空域飞向目标，一旦开启拦截就会在**半路被敌弹消耗掉**——满配实测击毁率从 73%
+	# 掉到 15%，导弹成了"打敌弹的磁铁"、完全打不到敌机。拦截弹的语义是"我的弹幕墙能
+	# 挡子弹"，那是直弹幕的能力；导弹战机因此**不提供**拦截弹（见 is_upgrade_offered）。
+	bullet.intercepts = false
+	# **出膛就朝目标方向飞**，而不是永远先朝正上方。原因同样是量出来的：玩家往上压、
+	# 敌机在下方经过时，永远朝上出膛的导弹要先掉头（6 弧度/秒要半秒），那半秒里它在
+	# 往反方向飞，甚至直接飞出战斗区顶部——追击基准里这一条把击毁率从 73% 压到 40%。
+	var muzzle: Vector2 = player.global_position + Vector2.UP * 34.0
+	if bullet.target_enemy != null and is_instance_valid(bullet.target_enemy):
+		var to_target: Vector2 = bullet.target_enemy.global_position - muzzle
+		if to_target.length_squared() > 1.0:
+			bullet.direction = to_target.normalized()
 	# 让导弹一眼可辨：比主弹幕更大，**换成带尾翼的弹体**，并且**真的换掉弹体颜色**
 	# （不是用 modulate 乘法调色）。可见性就是这么来的——不靠放宽锁定范围
 	# （那条路会让威胁归零）。
@@ -620,7 +747,7 @@ func _spawn_seeker() -> void:
 	bullet.body_color = Color(1.0, 0.62, 0.18, 1.0)
 	bullet.core_color = Color(1.0, 0.93, 0.72, 1.0)
 	actors.add_child(bullet)
-	bullet.global_position = player.global_position + Vector2.UP * 34.0
+	bullet.global_position = muzzle
 
 func _release_target() -> void:
 	if _target_marker != null and _target_marker.is_in_group("player_target"):
@@ -631,6 +758,7 @@ func _physics_process(delta: float) -> void:
 		return
 	_update_target_marker()
 	_update_seeker_launcher(delta)
+	_update_beam_burst(delta)
 	_sync_beams()
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -1024,15 +1152,27 @@ func _spawn_explosion(at: Vector2, ticket: int) -> void:
 	actors.add_child(burst)
 
 func _on_player_shoot_requested(origin: Vector2) -> void:
-	if ship_uses_beam():
-		# 光束战机不生成子弹：输出由持续存在的光柱承担（见 _sync_beams）。
-		# 音效按低得多的节奏播放——射击键每秒触发 6 次以上，照搬会把背景音乐盖掉，
-		# 而"持续光束"本来也不该是一串短促的点射声。
-		_beam_hum_left -= 1.0 / maxf(player.shoot_cooldown, 0.01)
-		if _beam_hum_left <= 0.0:
-			_beam_hum_left = BEAM_HUM_INTERVAL
+	# **开火请求按主武器分派**。三台战机走三条完全不同的路，共同点是都只由"按下开火"触发：
+	# 以前光束是一开机就常驻、导弹是自动按节奏发射，两者都不需要玩家按开火——
+	# 那不像武器，更像光环。
+	match ship_main_weapon():
+		"beam":
+			# 一串激光：只有上一串放完、间隔也走完之后才开新的一串。按住开火就是一串接一串。
+			if _beam_burst_left <= 0.0 and _beam_gap_left <= 0.0:
+				_beam_burst_left = beam_burst_seconds()
+				_play_sfx(SFX_SHOOT)
+			return
+		"seeker":
+			# 导弹每次开火最多放一发，且受发射冷却限制（必中武器不能靠射速堆输出）。
+			# 音效跟着"真的发射"走，而不是跟着按键走：打空枪不该有声音。
+			if _seeker_cooldown > 0.0:
+				return
+			if get_tree().get_first_node_in_group("player_target") == null:
+				return
+			_seeker_cooldown = seeker_launch_interval()
 			_play_sfx(SFX_SHOOT)
-		return
+			_spawn_seeker()
+			return
 	# 音效在请求处就播，跟子弹一样延迟生成会让声音比画面晚一拍。
 	_play_sfx(SFX_SHOOT)
 	# 统一延迟添加物理对象，规避 flushing queries 时更改碰撞世界。
@@ -1173,9 +1313,21 @@ func is_upgrade_offered(id: String) -> bool:
 	# 生命已满时补给不产生任何效果，不能再占一个选项位。上限本身可被“机体强化”抬高。
 	if (id == "repair" or id == "vitality") and lives >= max_lives:
 		return false
-	# 穿透弹对光束没有意义：光柱本来就穿透整列敌人，叠了不会有任何变化。
-	# 与其给出一个“选了没效果”的选项，不如不提供——这正是 is_upgrade_offered 存在的理由。
-	if id == "pierce" and ship_uses_beam():
+	# **每台战机的死选项都在这里挡掉**，而不是让玩家选到一个"没变化"的能力。
+	# 这条规则的价值来自两种方向相反的错法：给一个选了没效果的选项，或者干脆忘了挡。
+	# 光束：
+	#   · 穿透弹：光柱本来就穿透整列敌人，叠了没有任何变化；
+	#   · 弹体增幅：光柱没有"弹体"可放大，而把 width 交给升级等于把平衡支点交出去。
+	if ship_uses_beam() and (id == "pierce" or id == "caliber"):
+		return false
+	# 导弹战机：
+	#   · 火力增援 / 侧翼炮：它们加的是"车道"，而导弹是单发必中，加车道不会多打一发；
+	#   · 穿透弹：单发目标是**有意**的设计（继承穿透会一发连杀 4 架，实测把击毁率
+	#     从 56% 推到 80%），所以不给；
+	#   · 拦截弹：导弹会穿越整片敌弹空域，开了拦截就等于半路被消耗掉（实测击毁率
+	#     73% → 15%）。这是"看起来有用、其实在拆自己的台"的选项，同样不给。
+	if ship_uses_seekers() and (id == "multishot" or id == "wing_shot"
+			or id == "pierce" or id == "interceptor"):
 		return false
 	return true
 

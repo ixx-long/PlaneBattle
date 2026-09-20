@@ -13,8 +13,12 @@ extends Area2D
 ## 可视战斗区域的顶边：子弹升过这条线就销毁，因此打不到还没露头的敌机。
 ## 由 Main 统一赋值（规则归 Main），默认值等于顶部 HUD 色块的下沿。
 @export var play_area_top: float = 90.0
-## 追踪弹：为真时每帧朝"目标指示器"转向（游隼型）。由 Main 按当前战机设定。
+## 追踪弹：为真时每帧朝**自己锁定的目标**转向（游隼型）。由 Main 在生成时按当前战机设定。
 @export var homing: bool = false
+## 这一枚导弹锁定的敌机。**每枚导弹各锁一个**，而不是所有导弹共读一个"最近的敌机"：
+## 后者在第一枚击毁目标之后，其余导弹全都扑向一个已经被打掉的位置——实测那会让
+## 全屏导弹的实际击杀率掉到发射率的几分之一（击毁率 25%，而发射节奏本该支撑 80%）。
+@export var target_enemy: Node2D = null
 ## 每秒最多转多少弧度。留上限是为了让追踪**不是瞬间锁定**：没有上限的话子弹出膛当帧
 ## 就会折成一条指向目标的直线，看起来像瞬移，也丢掉了"慢速弹"这个代价。
 @export var homing_turn_rate: float = 5.0
@@ -37,6 +41,9 @@ var spent: bool = false
 
 func _ready() -> void:
 	add_to_group("player_bullet")
+	if homing:
+		# 单独的组，方便 Main 在发射时问"哪些目标已经有导弹在飞了"。
+		add_to_group("player_seeker")
 	area_entered.connect(_on_area_entered)
 	# 外观全部在 _ready 里应用：Main 按项目约定在 add_child 之前写好导出值。
 	var body := $Visual/Body as Polygon2D
@@ -75,12 +82,11 @@ func _physics_process(delta: float) -> void:
 		queue_free()
 
 func _steer_toward_target(delta: float) -> void:
-	# 目标由一个共享的指示器提供（Main 每帧只算一次"最近的敌机"），子弹只做一次
-	# O(1) 的组查询。若让每颗子弹各自遍历敌机，满配每秒 148 发会变成每秒几千次全表搜索。
-	var marker: Node2D = get_tree().get_first_node_in_group("player_target")
-	if marker == null or not is_instance_valid(marker):
+	# 每枚导弹锁**自己的**目标（见 target_enemy 的注释）。目标失效（被别的导弹打掉、
+	# 或飞出界释放）时不再转向，导弹按当前方向继续飞，出屏后自然销毁。
+	if target_enemy == null or not is_instance_valid(target_enemy):
 		return
-	var to_target: Vector2 = marker.global_position - global_position
+	var to_target: Vector2 = target_enemy.global_position - global_position
 	if to_target.length_squared() < 1.0:
 		return
 	var desired: Vector2 = to_target.normalized()
