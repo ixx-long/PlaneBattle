@@ -47,6 +47,9 @@
 | `Esc` | 暂停（震动开关 / 音量 / 重新开始） |
 | `1` ~ `5` | 升级时选择能力（卡牌数随能力变化） |
 | `R` | 开始 / 重开 |
+| **触屏** | 按住拖动即移动（飞机跟在指尖上方一点），**同时自动持续射击**；松开即停火 |
+
+> 触屏是为手机准备的：作品链接很可能是在手机上被点开的。操作提示会按设备自动切换，触屏设备上不会叫玩家去按 WASD。
 
 **核心循环**：移动躲避 → 击毁敌机 → 得分与经验 → 升级选能力 → 敌机同时变快 / 变密 / 更常射击 → 尽量延长生存。没有固定通关条件，目标是刷新最高分与生存时间。
 
@@ -81,6 +84,18 @@ play.bat
 
 > 引擎二进制**不在本仓库里**（173 MB，`.gitignore` 已排除）。如果那个目录不存在，`play.bat` 会明确告诉你缺什么。也可以在 `tools/` 下放任意一份 Godot 4.7.2，或直接照方式一用你自己装的编辑器。
 
+**方式三：浏览器里直接玩（Web 版）**
+
+Web 版发布在本仓库的 `gh-pages` 分支上，地址 `https://ixx-long.github.io/PlaneBattle/`。它由工程自带的 Web preset 导出，不需要手工点编辑器：
+
+```bash
+python tools/fetch_export_templates.py     # 首次：下载并校验导出模板（约 1.19 GB，Web 导出必需）
+python tools/export_web.py --publish       # 导出四个产物 + 自检 + 提交到 gh-pages 分支
+git push origin gh-pages                   # 推上去；首次还需在仓库 Settings → Pages 选 gh-pages 分支
+```
+
+导出时**必须关掉线程支持**（`variant/thread_support=false`）：带线程的 Web 导出要求服务器发 COOP/COEP 两个响应头，GitHub Pages 发不了，页面会一直卡在加载。
+
 ## 项目结构
 
 ```text
@@ -95,10 +110,12 @@ outputs/PlaneBattle/          游戏本体，导入这个目录即可运行
 └── tests/                    6 个测试脚本（不属于游戏节点树，不参与 F5）
 
 tools/                        构建与验证工具链
-├── validate_project.py       六种验证模式的调度入口
+├── validate_project.py       八种验证模式的调度入口
 ├── godot_log.py              引擎日志判读（区分真实错误与已登记的环境诊断）
 ├── build_deliverables.py     生成交付物：开发文档、验证报告、源码 ZIP
 ├── generate_audio.py         音频合成（固定随机种子，逐字节可复现）
+├── fetch_export_templates.py 下载并校验 Godot 导出模板（Web 版的前提）
+├── export_web.py             导出 Web 版并发布到 gh-pages 分支
 └── play.ps1                  play.bat 的实现
 
 screenshots/                  README 用的实机截图
@@ -175,7 +192,7 @@ python tools/build_deliverables.py
 
 **为什么文档不在版本库里**：它逐字嵌入了所有源码，提交它意味着**每一次改源码都会产生一份与源码改动等量的 diff**；而它由 `tools/document_sections.py` 加源码在几秒内重建。同理，验证报告里含每次都会变的实测帧时间。这两样都是产物而不是源码，所以 `.gitignore` 排除了它们。
 
-`tools/` 下的四个脚本各司其职：`validate_project.py` 调度六种验证模式，`godot_log.py` 判读引擎日志，`generate_audio.py` 合成音频，`build_deliverables.py` 打包交付物。
+`tools/` 下的脚本各司其职：`validate_project.py` 调度八种验证模式，`godot_log.py` 判读引擎日志，`generate_audio.py` 合成音频，`build_deliverables.py` 打包交付物，`fetch_export_templates.py` 与 `export_web.py` 负责 Web 版（下载模板、导出、发布）。
 
 ## 许可
 

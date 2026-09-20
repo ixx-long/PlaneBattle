@@ -72,6 +72,8 @@ const CHOICE_ACTIONS: Array[String] = ["choice_1", "choice_2", "choice_3", "choi
 
 var _damage_tween: Tween
 var _pulse_tween: Tween
+## 本机是否是触屏设备。只影响提示文案，不参与任何规则判定。
+var touch_device: bool = false
 
 func _ready() -> void:
 	start_button.pressed.connect(_on_start_pressed)
@@ -88,6 +90,10 @@ func _ready() -> void:
 		upgrade_cards[index].pressed.connect(_on_upgrade_card_pressed.bind(index))
 	hide_level_up()
 	hide_pause()
+	# 这一条决定所有操作提示的写法：触屏设备上既没有 WASD 也没有空格键，而提示是玩家
+	# 开局唯一能看到的操作说明。判定用引擎自己的能力查询、不猜平台——桌面浏览器接了
+	# 触摸屏也会走到这里，而那正是我们希望它显示触屏提示的情况。
+	touch_device = DisplayServer.is_touchscreen_available()
 
 func update_stats(points: int, remaining_lives: int, elapsed: float, level: int, wave: int) -> void:
 	score_label.text = "分数  %06d" % points
@@ -147,7 +153,10 @@ func show_start(ships: Array[Dictionary], selected: int) -> void:
 	_set_message_visible(true)
 	# 五行的长度都量过：MessageLabel 是固定矩形，多一行就会顶破它（有断言盯着）。
 	message_label.text = "飞机大作战\n\n连续击毁提升倍率 · 受伤或漏敌清零\n紫色敌机瞄准你 · 漏敌还会抬高难度\n普通 +10 / 射击 +20 · 初始 3 命 · 短暂无敌"
-	hint_label.text = "WASD / 方向键 移动   ·   空格 持续射击   ·   Shift 低速"
+	hint_label.text = (
+		"拖拽屏幕移动   ·   自动持续射击   ·   点卡片选能力" if touch_device
+		else "WASD / 方向键 移动   ·   空格 持续射击   ·   Shift 低速"
+	)
 	start_button.show()
 	restart_button.hide()
 	change_ship_button.hide()
@@ -187,7 +196,10 @@ func show_playing() -> void:
 	_set_ship_choice_visible(false)
 	# 不写具体数字：选项数会随“幸运补给”变化，写死迟早变成谎话
 	#（升级面板顶部那行是按实际张数动态生成的，这里只说“数字键”）。
-	hint_label.text = "击毁敌机升级   /   升级后按数字键选择能力"
+	hint_label.text = (
+		"击毁敌机升级   /   点卡片或数字键选能力" if touch_device
+		else "击毁敌机升级   /   升级后按数字键选择能力"
+	)
 
 func show_game_over(report: Dictionary) -> void:
 	_set_message_visible(true)
@@ -206,7 +218,10 @@ func show_game_over(report: Dictionary) -> void:
 		String(report["build_text"]),
 		closing,
 	]
-	hint_label.text = "按 R 或点击按钮重新开始，也可以换个战机再来"
+	hint_label.text = (
+		"点击按钮重新开始，也可以换个战机再来" if touch_device
+		else "按 R 或点击按钮重新开始，也可以换个战机再来"
+	)
 	start_button.hide()
 	restart_button.show()
 	# 结算页给出回到开始界面的入口。没有这条回路，玩家打完一局就再也见不到战机选择——

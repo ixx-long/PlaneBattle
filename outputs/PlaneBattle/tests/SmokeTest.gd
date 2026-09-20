@@ -396,6 +396,101 @@ func _run() -> void:
 	check(get_nodes_in_group("player_bullet").size() >= 2, "hold shoot repeats after cooldown")
 	await clear_arena()
 
+	# --- 触屏操作（Web / 手机版的入口）---
+	# 本作原本只有键盘。它要作为作品集链接发出去，就得能在手机上玩——招聘方是手游公司，
+	# 面试官很可能直接用手机点开。这里验三条最容易做坏的性质：**跟手、按住自动开火、抬手就停**。
+	#
+	# 事件用 Input.parse_input_event 真注入，而不是直接调内部函数：要验的正是"触摸事件真的
+	# 会走到 Player 的 _unhandled_input"这一条链路。**但坐标不能想当然**：引擎会先把窗口
+	# 坐标按屏幕变换换算成游戏内坐标（480×800 的 canvas_items 拉伸），而无头模式里窗口是
+	# **0×0**、这个变换会退化成 8%——实测一次触摸会被换算到一万像素以外，飞机直接被夹到
+	# 右下角。所以期望值一律用引擎自己的 `get_screen_transform()` 反算，
+	# 与坐标换算无关的移动逻辑则单独用游戏内坐标验。
+	game.set_ship("parallel")
+	game.player.position = Vector2(240.0, 650.0)
+	var pointer := Vector2(120.0, 420.0)
+	var lift: float = game.player.touch_lift
+	var logical: Vector2 = game.get_viewport().get_screen_transform().affine_inverse() * pointer
+	var press := InputEventScreenTouch.new()
+	press.position = pointer
+	press.pressed = true
+	Input.parse_input_event(press)
+	await settle(4)
+	check(game.player.touching, "按下屏幕后进入触屏操作状态")
+	check(
+		game.player.touch_target.distance_to(logical - Vector2(0.0, lift)) < 1.0,
+		"触点按引擎的屏幕变换换算成游戏内坐标，再抬高 touch_lift（手指不盖住飞机与弹道）"
+	)
+	var bullets_before: int = get_nodes_in_group("player_bullet").size()
+	await create_timer(0.25).timeout
+	check(
+		get_nodes_in_group("player_bullet").size() > bullets_before,
+		"按住屏幕会自动持续射击（手机上不用再单开一个开火键占屏幕）"
+	)
+	# 移动逻辑单独验：给一个战斗区内的目标，看飞机是否跟过去（这条与坐标换算无关）。
+	# 等 0.4 秒而不是几帧：跟手是**指数逼近**（跟手速度 = 距离 × touch_follow_scale），
+	# 距离按 exp(-倍率 × 时间) 衰减——0.1 秒只走完六成，指望它立刻到位是我第一版算错了。
+	game.player.position = Vector2(240.0, 650.0)
+	game.player.set_touch_target(Vector2(120.0, 420.0 + lift))
+	await create_timer(0.4).timeout
+	check(
+		game.player.position.distance_to(Vector2(120.0, 420.0)) < 8.0,
+		"飞机会跟到触点指的位置（是跟手，不是原地不动）"
+	)
+	# 越界：手指滑出屏幕，飞机应该贴边而不是跟着飞出去。
+	game.player.set_touch_target(Vector2(-500.0, 420.0 + lift))
+	await settle(12)
+	var bounds: Vector2 = game.get_viewport_rect().size
+	check(
+		game.player.position.x >= game.player.screen_margin.x
+			and game.player.position.x <= bounds.x - game.player.screen_margin.x,
+		"手指滑出屏幕后飞机被按在战斗区内（越界的手指不会把它带出去）"
+	)
+	# 拖拽事件也要认：换一个触点，目标必须跟着更新。
+	var drag := InputEventScreenDrag.new()
+	drag.position = Vector2(360.0, 300.0)
+	Input.parse_input_event(drag)
+	await settle(2)
+	var dragged: Vector2 = game.get_viewport().get_screen_transform().affine_inverse() * drag.position
+	check(
+		game.player.touch_target.distance_to(dragged - Vector2(0.0, lift)) < 1.0,
+		"拖动时目标跟着手指更新（拖拽事件也认）"
+	)
+	var release := InputEventScreenTouch.new()
+	release.position = drag.position
+	release.pressed = false
+	Input.parse_input_event(release)
+	await settle(4)
+	check(not game.player.touching, "抬手后退出触屏操作状态")
+	await clear_arena()
+	var quiet_before: int = get_nodes_in_group("player_bullet").size()
+	await create_timer(0.3).timeout
+	check(
+		get_nodes_in_group("player_bullet").size() == quiet_before,
+		"抬手之后不再自动开火（否则手机上会一直响个没完）"
+	)
+	check(not game.player.hitbox_hint.visible, "触屏不会顺带打开键盘那套低速判定提示")
+	# 提示文案必须与实际输入方式一致：让触屏玩家去找 WASD 是典型的"说明书说谎"。
+	# 直接改显示状态来验，而不是读当前那句提示——此刻屏幕上挂的是哪一句取决于
+	# 前面跑过哪些用例（升级面板、结算面板都会改写它），那样的断言会随测试顺序漂移。
+	var real_touch_device: bool = game.hud.touch_device
+	game.hud.touch_device = true
+	game.hud.show_start(game.SHIPS, game.selected_ship_index())
+	var touch_hint: String = game.hud.hint_label.text
+	game.hud.touch_device = false
+	game.hud.show_start(game.SHIPS, game.selected_ship_index())
+	var keyboard_hint: String = game.hud.hint_label.text
+	game.hud.touch_device = real_touch_device
+	check(
+		not touch_hint.contains("WASD") and keyboard_hint.contains("WASD"),
+		"操作提示跟着输入方式走：触屏设备上不会叫玩家去按 WASD"
+	)
+	check(
+		game.hud.touch_device == DisplayServer.is_touchscreen_available(),
+		"HUD 的触屏判定直接取引擎的能力查询，不自己猜平台"
+	)
+	await clear_arena()
+
 	# --- 游隼型的追踪导弹 ---
 	# **主弹幕一律照直飞，追踪是另一路武器。** 这是被数据逼出来的结构：
 	# 若每发子弹都追踪，满配每秒 13.5 次射击会全部命中，实测把敌方弹幕打到 0；

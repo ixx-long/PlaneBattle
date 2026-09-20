@@ -7,6 +7,22 @@ outputs/PlaneBattle/.godot/
 tools/godot-4.7.2/
 tools/godot-4.7.2.zip
 
+# --- 引擎的导出模板（约 1.19 GB）---
+# Web 导出必需，由 tools/fetch_export_templates.py 下载并安装到引擎的数据目录。
+# 和引擎二进制一样属于"本机工具链"，不进版本库。用通配是因为浏览器下载下来的
+# 文件名通常是官方原名（Godot_v4.7.2-stable_export_templates.tpz），
+# 而脚本自己下的是小写短名——两种都得挡住。
+tools/*.tpz
+
+# --- Web 导出的产物（gh-pages 分支的内容）---
+# 它是产物：一条命令（tools/export_web.py）就能重建，而且体积不小（wasm 约 38 MB）。
+# 页面本身发布在 gh-pages 分支上，主干只保留导出脚本与配置。
+outputs/web/
+# 发布 gh-pages 用的临时工作树（tools/export_web.py --publish 会建它）。
+# 它是同一份产物在另一个分支上的检出，不是主干的内容。
+.web-publish/
+outputs/web-logs/
+
 # --- 自动化测试的隔离 user:// 目录 ---
 # tools/validate_project.py 会把 APPDATA 指到这里，因此存档、对局记录、日志、
 # 着色器缓存全都落在工作区内而不污染真实用户目录。这些是运行产物。
