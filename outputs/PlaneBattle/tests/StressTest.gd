@@ -62,6 +62,11 @@ func _run() -> void:
 	await physics_frame
 	game.start_game()
 	game.enemy_timer.stop()
+	# **必须显式钉住战机**。战机的选择是写进 `user://save.cfg` 的持久设置，而威胁基准会把
+	# 三台战机都跑一遍、最后停在聚焦型；不钉住的话，这条基准量的就是“上一次测试留下的
+	# 那一台”，而且流程里两条基准的先后顺序会悄悄改变结论。子弹系是对象周转最快的一台
+	# （满配每秒 148 发 instantiate/free），所以最坏情况取它。
+	game.set_ship("parallel")
 	_stack_upgrades(game)
 	game.player.position = Vector2(240, 640)
 	# 关掉经验：击毁敌机会累积经验并触发升级抉择，而升级会把整局暂停——
@@ -127,17 +132,20 @@ func _run() -> void:
 	var object_growth: int = int(Performance.get_monitor(Performance.OBJECT_COUNT)) - baseline_objects
 
 	print(
-		"STRESS: 弹幕=%d发/次 冷却=%.3fs 理论=%.0f发/秒 峰值子弹=%d 峰值Actors=%d 平均帧=%.2fms 帧p99=%.2fms 清场步数=%d 残留Actors=%d 对象净增=%d"
+		"STRESS: 弹幕=%d发/次 冷却=%.3fs 理论=%.0f发/秒 峰值子弹=%d 峰值Actors=%d 平均帧=%.2fms 帧p99=%.2fms 清场步数=%d 残留Actors=%d 对象净增=%d 战机=%s"
 		% [
 			bullets_per_shot, shot_interval, float(bullets_per_shot) / maxf(shot_interval, 0.001),
 			peak_bullets, peak_actors, sum_frame_ms / float(steps), p99_frame_ms,
-			drain_steps, residual_actors, object_growth
+			drain_steps, residual_actors, object_growth, game.current_ship()["name"]
 		]
 	)
 
 	check(peak_bullets > 0 and peak_bullets <= PEAK_BULLET_CAP, "峰值并发子弹在预算之内")
 	check(peak_actors <= PEAK_ACTOR_CAP, "峰值 Actors 子节点数在预算之内")
 	check(residual_actors == 0, "停火后所有实体都被释放，没有越打越积")
+	# 与浸泡基准同一条守卫：战机是持久设置，被上一条基准改掉之后，这条基准量的就不再是
+	# "满配子弹系"这台最坏情况，而日志里的数字看起来毫无异样。
+	check(not game.ship_uses_beam(), "基准量的是子弹系满配（对象周转最快的一台，即最坏情况）")
 
 	# 退出前必须把音频停干净并放开流引用。start_game() 会放背景音乐，
 	# 若播放器还握着 AudioStream，Godot 退出时会偶发

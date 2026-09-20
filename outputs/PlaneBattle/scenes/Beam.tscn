@@ -1,0 +1,25 @@
+[gd_scene load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://scripts/Beam.gd" id="1"]
+
+[sub_resource type="RectangleShape2D" id="BeamShape"]
+size = Vector2(10, 200)
+
+[node name="Beam" type="Area2D"]
+collision_layer = 0
+collision_mask = 10
+script = ExtResource("1")
+
+[node name="Visual" type="Node2D" parent="."]
+
+[node name="Glow" type="Polygon2D" parent="Visual"]
+polygon = PackedVector2Array(-10, -200, 10, -200, 10, 0, -10, 0)
+color = Color(0.3, 0.78, 1, 0.22)
+
+[node name="Core" type="Polygon2D" parent="Visual"]
+polygon = PackedVector2Array(-5, -200, 5, -200, 5, 0, -5, 0)
+color = Color(0.78, 0.96, 1, 0.85)
+
+[node name="CollisionShape2D" type="CollisionShape2D" parent="."]
+position = Vector2(0, -100)
+shape = SubResource("BeamShape")

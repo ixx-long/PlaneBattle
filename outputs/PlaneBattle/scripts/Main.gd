@@ -8,6 +8,7 @@ const PLAYER_BULLET_SCENE: PackedScene = preload("res://scenes/PlayerBullet.tscn
 const ENEMY_BULLET_SCENE: PackedScene = preload("res://scenes/EnemyBullet.tscn")
 const EXPLOSION_SCENE: PackedScene = preload("res://scenes/Explosion.tscn")
 const BOSS_SCENE: PackedScene = preload("res://scenes/Boss.tscn")
+const BEAM_SCENE: PackedScene = preload("res://scenes/Beam.tscn")
 ## 波次/难度参数表的脚本。项目约定不写 class_name，所以用 preload 拿脚本再 new()，
 ## 作为 .tres 漏配时的兜底——tuning 为 null 时整局会直接崩在第一次生成敌机上。
 const WAVE_TUNING_SCRIPT: GDScript = preload("res://scripts/WaveTuning.gd")
@@ -43,6 +44,8 @@ const SETTINGS_SHAKE: String = "screen_shake"
 const SETTINGS_MUSIC: String = "music_percent"
 const SETTINGS_SFX: String = "sfx_percent"
 const SETTINGS_SHIP: String = "ship"
+## 光束战机的持续音效间隔。射击键每秒触发 6 次以上，照搬会把背景音乐盖掉。
+const BEAM_HUM_INTERVAL: float = 0.45
 
 ## 升级时的基础选项数；“幸运补给”每层再多给 1 个。
 const BASE_OFFERS: int = 4
@@ -93,6 +96,9 @@ const SHIPS: Array[Dictionary] = [
 		"seeker_speed_scale": 1.0,
 		"seeker_turn_rate": 0.0,
 		"seeker_lock_range": 0.0,
+		"beam": false,
+		"beam_width": 0.0,
+		"beam_tick_interval": 0.0,
 		"hull": [Vector2(0, -32), Vector2(10, -7), Vector2(27, 13), Vector2(27, 21), Vector2(8, 15),
 			Vector2(7, 28), Vector2(-7, 28), Vector2(-8, 15), Vector2(-27, 21), Vector2(-27, 13), Vector2(-10, -7)],
 		"hull_color": Color(0.04, 0.42, 0.55, 1),
@@ -120,11 +126,35 @@ const SHIPS: Array[Dictionary] = [
 		"seeker_speed_scale": 0.7,
 		"seeker_turn_rate": 6.0,
 		"seeker_lock_range": 900.0,
+		"beam": false,
+		"beam_width": 0.0,
+		"beam_tick_interval": 0.0,
 		"hull": [Vector2(0, -36), Vector2(7, -8), Vector2(20, 2), Vector2(31, 22), Vector2(12, 13),
 			Vector2(6, 28), Vector2(-6, 28), Vector2(-12, 13), Vector2(-31, 22), Vector2(-20, 2), Vector2(-7, -8)],
 		"hull_color": Color(0.06, 0.44, 0.38, 1),
 		"cockpit_color": Color(0.72, 0.98, 0.88, 1),
 		"engine_color": Color(1, 0.78, 0.32, 1),
+	},
+	{
+		"id": "focus",
+		"name": "聚焦型",
+		"detail": "贯穿光束 · 出膛即中，敌机进入光柱就毁；代价是覆盖窄",
+		# 光束**不是子弹**：没有飞行时间，敌机一进入这条竖线就在下一次结算时被击毁。
+		# 代价是覆盖——每条光柱只有 beam_width 像素宽。
+		"beam": true,
+		# **beam_width 是这台战机的平衡支点**，改它必须重跑威胁基准：
+		# 光柱越宽，被瞬间清掉的敌机越多，敌方弹幕就越少。
+		"beam_width": 10.0,
+		"beam_tick_interval": 0.08,
+		"seeker_interval": 0.0,
+		"seeker_speed_scale": 1.0,
+		"seeker_turn_rate": 0.0,
+		"seeker_lock_range": 0.0,
+		"hull": [Vector2(0, -30), Vector2(14, -10), Vector2(18, 8), Vector2(30, 18), Vector2(10, 14),
+			Vector2(8, 30), Vector2(-8, 30), Vector2(-10, 14), Vector2(-30, 18), Vector2(-18, 8), Vector2(-14, -10)],
+		"hull_color": Color(0.33, 0.19, 0.55, 1),
+		"cockpit_color": Color(0.85, 0.82, 1, 1),
+		"engine_color": Color(0.55, 0.85, 1, 1),
 	},
 ]
 
@@ -250,6 +280,11 @@ var _target_marker: Marker2D
 ## 追踪导弹的发射冷却。用累加器而不是 Timer：它的周期完全由当前战机的数据决定，
 ## 换战机时不必去 reschedule 一个节点，也不会在换局时留下未触发的回调。
 var _seeker_cooldown: float = 0.0
+## 光束战机的持续音效节奏计数（见 BEAM_HUM_INTERVAL）。
+var _beam_hum_left: float = 0.0
+## 当前战机在场上的光束。与 bullets 不同，光束是**常驻节点**而不是每次射击生成，
+## 所以 Main 持有一个数组、按车道数增减（见 _sync_beams）。
+var beams: Array[Area2D] = []
 
 func _ready() -> void:
 	# tuning 是 Resource 类型（项目约定不写 class_name，没法标成具体类型），所以
@@ -331,10 +366,14 @@ func player_dps_proxy() -> float:
 	# “每秒能打出多少发”就是玩家当前的输出强度：本作所有敌机都是一发击毁，
 	# 所以伤害与弹幕密度完全等价，不需要另算伤害公式。
 	#
-	# 战机在这里**不需要额外折算**：追踪弹仍然是"每发子弹 × 每秒发数"，只是弹道会拐弯，
-	# 因此 Boss 血量自动就是对的。将来加光束这类"没有子弹"的武器时才必须在这里补一项，
-	# 否则 Boss 会按一个偏低的输出算血量、死得比 boss_target_seconds 快得多。
-	var per_shot: float = float(_bullet_count + _wing_pairs * 2)
+	# 追踪导弹**不需要额外折算**：它仍然是"每发子弹 × 每秒发数"，只是弹道会拐弯，
+	# 因此 Boss 血量自动就是对的。
+	#
+	# 光束**必须**在这里折算，否则 Boss 会按一个偏低的输出算血量、死得比
+	# boss_target_seconds 快得多：它没有子弹，输出 = 光柱条数 × 每秒结算次数。
+	if ship_uses_beam():
+		return float(lane_count()) / maxf(beam_tick_interval(), 0.01)
+	var per_shot: float = float(lane_count())
 	return per_shot / maxf(player.shoot_cooldown, 0.01)
 
 func current_ship() -> Dictionary:
@@ -354,6 +393,69 @@ func selected_ship_index() -> int:
 
 func ship_has_seekers() -> bool:
 	return float(current_ship().get("seeker_interval", 0.0)) > 0.0
+
+func ship_uses_beam() -> bool:
+	return bool(current_ship().get("beam", false))
+
+func beam_tick_interval() -> float:
+	# “弹速强化”在光束战机上映射为**充能更快**：缩短结算间隔 = 提高每秒伤害
+	# （普通敌机一次结算即毁，所以只有对 Boss 才有意义）。这样它在这台战机上仍是
+	# 一个有效选项，而不是一个选了没变化的死选项。
+	return maxf(
+		0.03,
+		float(current_ship().get("beam_tick_interval", 0.08)) - 0.008 * float(_stacks_of("velocity"))
+	)
+
+func lane_count() -> int:
+	# 车道数：子弹与光束共用同一个口径，所以两台战机的“多发/侧翼炮”含义完全一致。
+	return _bullet_count + _wing_pairs * 2
+
+func _lane_offsets() -> Array[float]:
+	# 车道水平偏移的**唯一来源**：子弹与光束都从这里取，避免两处各写一份然后悄悄分叉。
+	# _bullet_count 为 1 且没有侧翼炮时偏移为 0，与最早的单发行为完全一致。
+	var offsets: Array[float] = []
+	var center: float = float(_bullet_count - 1) * 0.5
+	for index in range(_bullet_count):
+		offsets.append((float(index) - center) * bullet_spacing)
+	var outermost: float = center * bullet_spacing
+	for pair in range(_wing_pairs):
+		var gap: float = outermost + wing_spacing * float(pair + 1)
+		offsets.append(-gap)
+		offsets.append(gap)
+	offsets.sort()
+	return offsets
+
+func _sync_beams() -> void:
+	# 光束的条数与水平位置**照抄子弹车道的算法**，这样两台战机的升级含义一致，
+	# 平衡对比也干净：差别只在“瞬间命中”与“覆盖宽窄”，而不在车道布局。
+	var wanted: int = lane_count() if (ship_uses_beam() and state == GameState.PLAYING) else 0
+	while beams.size() > wanted:
+		var extra = beams.pop_back()
+		if is_instance_valid(extra):
+			extra.queue_free()
+	var width_now: float = float(current_ship().get("beam_width", 10.0))
+	while beams.size() < wanted:
+		var beam = BEAM_SCENE.instantiate()
+		# 只预置宽度：_ready() 会立刻用它建出多边形与碰撞形状，预置晚了第一帧形状就是错的。
+		# 结算间隔与拦截标志不在这里写，交给下面统一的 refresh——同一个参数两处各写一份
+		# 正是“只对新光柱生效”那类 bug 的温床。
+		beam.beam_width = width_now
+		actors.add_child(beam)
+		beams.append(beam)
+	if beams.is_empty():
+		return
+	var offsets_now: Array[float] = _lane_offsets()
+	var muzzle_y: float = player.global_position.y - 34.0
+	var length_now: float = maxf(muzzle_y - play_area_top, 1.0)
+	var interval_now: float = beam_tick_interval()
+	for index in range(beams.size()):
+		var beam = beams[index]
+		if not is_instance_valid(beam):
+			continue
+		beam.global_position = Vector2(player.global_position.x + offsets_now[index], muzzle_y)
+		# 尺寸、结算间隔、拦截标志都在这里同步：玩家是在**局中**拿到“弹速强化 / 拦截弹”的，
+		# 屏幕上的光柱必须立刻换节奏、立刻开始拦敌弹，否则升级看起来没生效。
+		beam.refresh(width_now, length_now, interval_now, _bullet_intercepts)
 
 func set_ship(id: String) -> bool:
 	# 返回是否真的换成了：存档与测试都需要知道"这个 id 认不认"。
@@ -473,6 +575,7 @@ func _physics_process(delta: float) -> void:
 		return
 	_update_target_marker()
 	_update_seeker_launcher(delta)
+	_sync_beams()
 
 func _unhandled_input(event: InputEvent) -> void:
 	if event.is_action_pressed("restart") and not event.is_echo():
@@ -860,6 +963,15 @@ func _spawn_explosion(at: Vector2, ticket: int) -> void:
 	burst.global_position = at
 
 func _on_player_shoot_requested(origin: Vector2) -> void:
+	if ship_uses_beam():
+		# 光束战机不生成子弹：输出由持续存在的光柱承担（见 _sync_beams）。
+		# 音效按低得多的节奏播放——射击键每秒触发 6 次以上，照搬会把背景音乐盖掉，
+		# 而"持续光束"本来也不该是一串短促的点射声。
+		_beam_hum_left -= 1.0 / maxf(player.shoot_cooldown, 0.01)
+		if _beam_hum_left <= 0.0:
+			_beam_hum_left = BEAM_HUM_INTERVAL
+			_play_sfx(SFX_SHOOT)
+		return
 	# 音效在请求处就播，跟子弹一样延迟生成会让声音比画面晚一拍。
 	_play_sfx(SFX_SHOOT)
 	# 统一延迟添加物理对象，规避 flushing queries 时更改碰撞世界。
@@ -868,16 +980,9 @@ func _on_player_shoot_requested(origin: Vector2) -> void:
 func _create_player_bullet(origin: Vector2, ticket: int) -> void:
 	if state != GameState.PLAYING or ticket != run_id:
 		return
-	# 主射：全部竖直向上，只按水平间距排成平行弹道；_bullet_count 为 1 时偏移为 0，与单发完全一致。
-	var center: float = float(_bullet_count - 1) * 0.5
-	for index in range(_bullet_count):
-		_spawn_player_bullet(origin + Vector2((float(index) - center) * bullet_spacing, 0.0))
-	# 侧翼炮：接着主弹幕的最外侧继续向外排，因此任何层数组合都是一条互不重叠的平行弹幕。
-	var outermost: float = center * bullet_spacing
-	for pair in range(_wing_pairs):
-		var gap: float = outermost + wing_spacing * float(pair + 1)
-		_spawn_player_bullet(origin + Vector2(-gap, 0.0))
-		_spawn_player_bullet(origin + Vector2(gap, 0.0))
+	# 车道偏移取自 _lane_offsets()：光束用的是同一份，两台战机的车道布局因此逐值一致。
+	for offset in _lane_offsets():
+		_spawn_player_bullet(origin + Vector2(offset, 0.0))
 
 func _spawn_player_bullet(at: Vector2) -> void:
 	var bullet = PLAYER_BULLET_SCENE.instantiate()
@@ -889,7 +994,6 @@ func _spawn_player_bullet(at: Vector2) -> void:
 	# （见 _spawn_seeker）。把追踪做进主弹幕会让满配每秒 13.5 次射击全部命中，
 	# 敌方弹幕会被打到 0。
 	bullet.homing = false
-	bullet.speed = _bullet_speed
 	# direction 保持默认的正上方，弹道竖直，所以图形旋转量恒为 0。
 	# 弹体增幅：直接缩放节点，碰撞形状与图形一起变大，因此“更好命中”是真的生效。
 	bullet.scale = Vector2.ONE * _bullet_scale
@@ -916,9 +1020,11 @@ func _clear_entities() -> void:
 		if entity.has_method("deactivate"):
 			entity.deactivate()
 		entity.queue_free()
-	# Boss 也在 actors 里、会被上面一并释放，这里同步丢掉引用，
-	# 免得后续 is_instance_valid(boss) 之外的地方还拿着一个即将失效的对象。
+	# Boss 与光束都在 actors 里、会被上面一并释放，这里同步丢掉引用，
+	# 免得后续还拿着一个即将失效的对象（光束数组尤其要注意：长度不归零的话，
+	# 下一局 _sync_beams 会以为光束还在、只去更新已经释放的节点）。
 	boss = null
+	beams.clear()
 
 func _refresh_hud() -> void:
 	# HUD 只负责显示，数值一律由 Main 计算后传入；集中一处刷新，避免漏改某个调用点。
@@ -997,6 +1103,10 @@ func is_upgrade_offered(id: String) -> bool:
 		return false
 	# 生命已满时补给不产生任何效果，不能再占一个选项位。上限本身可被“机体强化”抬高。
 	if (id == "repair" or id == "vitality") and lives >= max_lives:
+		return false
+	# 穿透弹对光束没有意义：光柱本来就穿透整列敌人，叠了不会有任何变化。
+	# 与其给出一个“选了没效果”的选项，不如不提供——这正是 is_upgrade_offered 存在的理由。
+	if id == "pierce" and ship_uses_beam():
 		return false
 	return true
 

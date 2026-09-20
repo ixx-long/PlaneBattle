@@ -476,7 +476,102 @@ func _run() -> void:
 		"标准型会释放目标指示器（没有东西需要它）"
 	)
 	await clear_arena()
-	# 这一段里的敌机是夹具（为了让指示器有目标、也为了腾地方），但它们走的是真实的
+
+	# --- 聚焦型的光束 ---
+	# 光束**不是子弹**：它是一条持续存在的竖直致命光柱，敌机一进入就在下一次结算时
+	# 被击毁（没有飞行时间）。代价是覆盖窄，所以它反而比标准型更"有威胁"。
+	game.set_ship("focus")
+	check(game.ship_uses_beam(), "聚焦型使用光束")
+	game._physics_process(0.016)
+	check(
+		game.beams.size() == game.lane_count(),
+		"光束条数等于车道数（多发与侧翼炮在这台战机上含义不变）"
+	)
+	game.player.position = Vector2(240, 650)
+	game._physics_process(0.016)
+	var lane_offsets: Array[float] = game._lane_offsets()
+	var beams_placed := true
+	for index in range(game.beams.size()):
+		var beam_node = game.beams[index]
+		if not is_equal_approx(beam_node.global_position.x, 240.0 + lane_offsets[index]):
+			beams_placed = false
+	check(beams_placed, "光束按车道偏移排开，并且跟随玩家")
+	var beam_top: float = game.beams[0].global_position.y - game.beams[0].beam_length
+	check(
+		is_equal_approx(beam_top, game.play_area_top),
+		"光束上端止于战斗区顶边（不会伸到信息栏后面去杀还没露头的敌机）"
+	)
+	# 看得见的"实体"必须等于真正会造成伤害的范围：亮芯宽度 = 碰撞形状宽度 = beam_width。
+	# 与 Player 的判定提示是同一条纪律——一个与真实判定不符的提示比没有提示更糟。
+	var core: Polygon2D = game.beams[0].get_node("Visual/Core")
+	var core_width: float = absf(core.polygon[1].x - core.polygon[0].x)
+	var shape_width: float = (game.beams[0].get_node("CollisionShape2D") as CollisionShape2D).shape.size.x
+	check(
+		is_equal_approx(core_width, game.beams[0].beam_width)
+		and is_equal_approx(shape_width, game.beams[0].beam_width),
+		"光柱亮芯的宽度等于真实判定宽度（不画一条比判定更宽或更窄的假光柱）"
+	)
+	# 瞬间命中：放进光柱的敌机会被击毁，不需要等子弹飞过去。
+	# 用光柱**实测**的横坐标而不是我设定的 240：断言依赖的应该是“敌机在不在柱子里”，
+	# 而不是“我以为玩家站在哪”。
+	var beam_x: float = game.beams[0].global_position.x
+	var in_beam = make_enemy(Vector2(beam_x, 300))
+	await settle(12)
+	check(not is_instance_valid(in_beam), "敌机进入光柱后被击毁（没有飞行时间）")
+	# 代价：光柱之外的敌机完全不受影响。
+	var outside_x: float = beam_x + 190.0 if beam_x + 190.0 <= 440.0 else beam_x - 190.0
+	var out_of_beam = make_enemy(Vector2(outside_x, 300))
+	await settle(12)
+	check(is_instance_valid(out_of_beam), "光柱之外的敌机不受影响（覆盖窄就是这台战机的代价）")
+	# 敌弹在光柱里会被清掉——这是"拦截弹"在这台战机上的表现形式。
+	# 拦截弹要在**光柱已经存在之后**拿到：光柱是从开局一直存在的，参数不会自己回头同步。
+	game.xp = 0
+	force_choose("interceptor")
+	game._physics_process(0.016)
+	check(game.beams[0].intercepts, "局中拿到拦截弹后，已存在的光柱立刻开始拦敌弹")
+	var beam_blocked = make_enemy_bullet(Vector2(beam_x, 300))
+	await settle(12)
+	check(not is_instance_valid(beam_blocked), "光柱会击落柱内的敌弹（拦截弹在这台战机上仍有效）")
+	# 光束战机不生成子弹。
+	game._on_player_shoot_requested(game.player.position)
+	await settle(3)
+	var beam_ship_bullets: int = 0
+	for entity in get_nodes_in_group("player_bullet"):
+		beam_ship_bullets += 1
+	check(beam_ship_bullets == 0, "光束战机不生成子弹（输出由光柱承担）")
+	# 弹速强化映射为“充能更快”：缩短结算间隔。没有映射的话它在这台战机上就是死选项。
+	var ship_base_tick: float = float(game.current_ship()["beam_tick_interval"])
+	var live_beam = game.beams[0]
+	var tick_before: float = live_beam.tick_interval
+	game.xp = 0
+	force_choose("velocity")
+	game._physics_process(0.016)
+	check(
+		game.beam_tick_interval() < ship_base_tick,
+		"弹速强化在光束战机上缩短结算间隔（充能更快），不是死选项"
+	)
+	check(
+		live_beam.tick_interval < tick_before,
+		"局中拿到弹速强化后，已存在的光柱立刻换到新节奏（不是只对新光柱生效）"
+	)
+	check(game.beam_tick_interval() >= 0.03, "结算间隔有下限，堆再多也不会变成 0")
+	# 每秒伤害必须按光柱口径折算进 Boss 血量公式，否则 Boss 会按一个偏低的输出算血量、
+	# 死得比 boss_target_seconds 快得多。
+	check(
+		is_equal_approx(game.player_dps_proxy(), float(game.lane_count()) / game.beam_tick_interval()),
+		"光束的每秒伤害按“光柱条数 × 每秒结算次数”折算，Boss 血量才不会算低"
+	)
+	# 穿透弹则确实没有意义：光柱本来就穿透整列敌人。**不提供**胜过提供一个选了没变化的。
+	check(not game.is_upgrade_offered("pierce"), "穿透弹对光束是死选项，因此不提供")
+	# 换回非光束战机后光柱必须消失。
+	check(not game.beams.is_empty(), "（前置）此时光柱确实存在，下面的清空断言才有意义")
+	game.set_ship("parallel")
+	game._physics_process(0.016)
+	check(game.beams.is_empty(), "换回标准型后光柱消失")
+	check(game.is_upgrade_offered("pierce"), "（对照）标准型仍然提供穿透弹")
+	await clear_arena()
+
+	# 前面那些敌机是夹具（为了让指示器有目标、也为了腾地方），但它们走的是真实的
 	# 击毁路径、会加分。后面的计分断言要的是干净起点，所以这里显式复位——
 	# 与"连击会累积得分倍率，夹具测试前必须清零"是同一类隔离。
 	game.score = 0

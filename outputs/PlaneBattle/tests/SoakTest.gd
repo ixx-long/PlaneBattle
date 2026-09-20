@@ -74,6 +74,13 @@ func _run() -> void:
 	await settle(2)
 	game.start_game()
 	game.enemy_timer.stop()
+	# **必须显式钉住战机**：战机的选择是写进 `user://save.cfg` 的持久设置，而上一条基准
+	# （威胁基准）会把三台战机都跑一遍、最后停在聚焦型。不钉住就会出两个问题：
+	#   ① 量到的是"上一次测试留下的那一台"，两条基准的先后顺序会悄悄改变结论；
+	#   ② **光束战机的残留永远不会归零**——光柱是持续存在的武器本身，只要 state 还在
+	#      PLAYING，`_sync_beams()` 下一帧就会把它重新建出来。第一版就是这么失败的：
+	#      残留 Actors=11，正好等于满配的光柱条数，而 `_clear_entities()` 明明是干净的。
+	game.set_ship("parallel")
 	_stack_upgrades(game)
 	# 与压力基准同样的三条前提：玩家不动、不会死、不会被升级抉择打断。
 	game.player.position = Vector2(240, 640)
@@ -138,12 +145,16 @@ func _run() -> void:
 		late_peak = maxi(late_peak, actor_peaks[index])
 
 	print(
-		"SOAK: 时长=%.0fs 前半帧=%.2fms 后半帧=%.2fms 早期实体峰值=%d 后期实体峰值=%d 清场步数=%d 残留Actors=%d 对象净增=%d"
+		"SOAK: 时长=%.0fs 前半帧=%.2fms 后半帧=%.2fms 早期实体峰值=%d 后期实体峰值=%d 清场步数=%d 残留Actors=%d 对象净增=%d 战机=%s"
 		% [SOAK_SECONDS, first_half_frame, second_half_frame,
-			early_peak, late_peak, drain_steps, residual_actors, object_growth]
+			early_peak, late_peak, drain_steps, residual_actors, object_growth,
+			game.current_ship()["name"]]
 	)
 
 	check(first_half_frame > 0.0 and second_half_frame > 0.0, "前后半段都取到了有效的帧时间样本")
+	# 这条守的是"量错了对象"：战机是持久设置，一旦被上一条基准改成聚焦型，这条基准量的
+	# 就是一台没有子弹的战机，"最坏情况"与"残留必须为 0"两条结论会同时失真。
+	check(not game.ship_uses_beam(), "基准量的是子弹系满配（对象周转最快的一台，即最坏情况）")
 	check(
 		second_half_frame <= first_half_frame * FRAME_DRIFT_TOLERANCE,
 		"后半段帧时间没有随时间退化（%.2fms → %.2fms）" % [first_half_frame, second_half_frame]

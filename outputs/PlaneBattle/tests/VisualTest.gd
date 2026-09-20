@@ -105,6 +105,26 @@ func _run() -> void:
 	game._clear_entities()
 	await create_timer(0.2).timeout
 
+	# 贯穿光束：切到聚焦型，并给两条车道（等于“火力增援”拿了一级），好让光柱的
+	# **平行车道**关系在图上看得明白：车道间距 14 像素、光柱判定宽 10 像素，所以两条
+	# 光柱之间只留一道窄缝——图与这句话必须对得上，不能画出一条比判定更宽的光带。
+	# **这张的存在理由与追踪导弹那张完全相同**：光束是这台战机唯一的核心视觉标识，
+	# 一旦宽度、渲染层级或几何算错，平衡数字照样全绿，只有真人看得出“东西没画出来”。
+	game.set_ship("focus")
+	game._bullet_count = 2
+	# 敌机刻意摆在两条光柱**之外**：光柱覆盖窄正是这台战机的代价，图上要能看出来。
+	for spot in [Vector2(110, 235), Vector2(375, 320)]:
+		var flanking = load("res://scenes/Enemy.tscn").instantiate()
+		flanking.position = spot
+		flanking.speed = 0.0
+		game.actors.add_child(flanking)
+	await create_timer(0.3).timeout
+	await capture("res://../beam-preview.png")
+	game._bullet_count = 1
+	game.set_ship("parallel")
+	game._clear_entities()
+	await create_timer(0.2).timeout
+
 	# Boss 战：走真实登场路径，并手动把它推到位，好让截图里能看清机体与顶部血条。
 	game.boss_pending = true
 	game._on_enemy_timer_timeout()
