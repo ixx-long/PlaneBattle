@@ -160,6 +160,23 @@ func _run() -> void:
 	game.boss.take_hit()
 	await create_timer(0.1).timeout
 	await capture("res://../boss-preview.png")
+
+	# Boss 二阶段的两张证据。**它们的存在理由**：转阶段由三件事共同表达——全屏白闪、
+	# 血条换色、专属音效，而"弹幕换成了螺旋"又是第四件。断言能验信号与方向，
+	# 但"玩家看得见吗"只有截图能回答（这条教训在光柱与追踪导弹上都吃过）。
+	# 先把血量打到阈值之上一点，再补一刀跨过去，走的是真实的受伤路径。
+	var boss_threshold: int = int(floor(float(game.boss.max_hp) * game.boss.phase_two_ratio))
+	game.boss.hp = boss_threshold + 1
+	game.boss.take_hit()
+	await create_timer(0.12).timeout
+	await capture("res://../boss-phase-preview.png")
+	# 等仪式走完（0.5 秒），再放两轮螺旋弹：一张图里就能看出"上一轮与这一轮差了半个弹位"。
+	await create_timer(0.6).timeout
+	game.boss.fire_spiral()
+	await create_timer(float(game.boss.spiral_interval)).timeout
+	game.boss.fire_spiral()
+	await create_timer(0.25).timeout
+	await capture("res://../boss-spiral-preview.png")
 	# 收尾：把 Boss 与它可能打出的弹清掉，免得出现在后面的截图里。
 	game._purge_enemy_bullets()
 	game.boss.deactivate()

@@ -119,6 +119,23 @@ extends Resource
 @export var boss_fan_degrees: float = 64.0
 @export var boss_bullet_speed: float = 210.0
 @export var boss_bullet_speed_cap: float = 520.0
+## --- 二阶段 ---
+## 血量降到这个比例时**换一套弹幕**，而不是把一阶段加速：停止横向巡航，
+## 扇形齐射改成**螺旋弹**——一组弹以固定角速度绕机体旋转发射，玩家得找缝隙钻。
+## 视觉与手感都与扇形完全不同，所以玩家一眼就知道"它急了"。
+@export var boss_phase_two_ratio: float = 0.5
+## 转阶段那一下的仪式时长：停火、停巡航、全屏闪白 + 专属音效。
+## 这半秒是**故意留的**：不声不响地换一套弹幕，玩家会以为游戏出了问题；
+## 而"停一下、闪一下、换弹幕"正好读作"它要变招了"。
+@export var boss_transition_seconds: float = 0.5
+## 螺旋弹的形状：每轮几发（均分整圈）、每轮相对上一轮转多少度、发射间隔、弹速。
+## **每轮都转一个固定角**是"螺旋"的全部秘密：单看一轮弹幕是个正多边形，
+## 只有把它和上一轮叠起来才看得出在转——所以角度步长要和发射间隔一起调。
+@export var boss_spiral_arms: int = 6
+@export var boss_spiral_step_degrees: float = 17.0
+@export var boss_spiral_interval: float = 0.75
+## 螺旋弹刻意比扇形慢：慢弹才留得出"找缝隙"的时间，快了就只是"躲不掉的弹幕墙"。
+@export var boss_spiral_bullet_speed: float = 160.0
 ## 击破奖励分。注意它**同时是经验**，给太高会让玩家一口气连升数级。
 @export var boss_score: int = 500
 ## 击破 Boss 额外补几级经验（0.5 = 半级）。

@@ -2078,6 +2078,107 @@ func _run() -> void:
 	)
 	game._purge_enemy_bullets()
 
+	# --- Boss 二阶段：50% 血量换一套弹幕 ---
+	# 这一组分三层验：**触发点**（边界要准，否则"50%"只是个说法）、**仪式**
+	# （停火停巡航 + 全屏闪白 + 专属音效 + 血条换色）、**螺旋本身**（整圈 + 每轮在转）。
+	var phase_events: Array[int] = []
+	game.boss.phase_changed.connect(func(value: int) -> void: phase_events.append(value))
+	# **边界要和代码同口径**：代码判的是"血量 > 上限 × 比例"，所以触发点是
+	# `floor(上限 × 比例)`（血量是整数，`max_hp` 为奇数时 ceil 会差 1 点——
+	# 第一版就是这么写的，于是"跨过阈值"那一刀其实还差一点，断言才会失败）。
+	var phase_threshold: int = int(floor(float(game.boss.max_hp) * game.boss.phase_two_ratio))
+	# 先站在阈值**之上**打一刀：不该换阶段。
+	game.boss.hp = phase_threshold + 2
+	game.boss.take_hit()
+	check(
+		game.boss.phase == 1 and phase_events.is_empty(),
+		"血量还在阈值之上时不换阶段（边界要准）"
+	)
+	# 再打一刀跨过阈值。
+	game.boss.take_hit()
+	check(game.boss.phase == 2, "血量降到 50% 时切到二阶段")
+	check(phase_events == [2], "转阶段只广播一次（阶段只升不降）")
+	# 仪式：这半秒里它**停火也停巡航**。停住是有意的——变招需要一个句读，
+	# 否则玩家只会觉得"弹幕忽然变密了"，而不会觉得"它换了打法"。
+	check(game.boss.in_transition(), "转阶段有一段仪式时间（不是当场就换弹幕）")
+	check(game.boss.shoot_timer.is_stopped(), "仪式期间停火")
+	var frozen_x: float = game.boss.position.x
+	for step in range(3):
+		game.boss._physics_process(0.1)
+	check(
+		is_equal_approx(game.boss.position.x, frozen_x),
+		"二阶段不再横向巡航（仪式期间与之后都停在原地，螺旋才看得出在转）"
+	)
+	# 仪式的三件事必须同时发生：白闪、血条换色、专属音效。
+	check(
+		game.hud.phase_flash.color.a > 0.0,
+		"转阶段触发全屏闪白（仪式感的画面部分）"
+	)
+	check(
+		game.hud.boss_label.text.contains("二阶段"),
+		"血条文字标出二阶段（光改颜色对色弱玩家读不出来）"
+	)
+	# 再挨一刀：阶段标记**不能**被血量刷新覆盖掉。这条是被截图抓出来的——第一版只在
+	# 切换那一刻写了一次文字，下一次掉血就把它冲掉了，图上只剩 "BOSS 22/45"。
+	game.boss.take_hit()
+	check(
+		game.hud.boss_label.text.contains("二阶段"),
+		"打完一刀之后阶段标记还在（血量刷新不能冲掉阶段）"
+	)
+	check(sfx_used(game.SFX_PHASE), "转阶段播放专属音效（与登场那条下行音效相对）")
+	# 仪式结束：恢复开火。
+	for step in range(4):
+		game.boss._physics_process(0.1)
+	check(not game.boss.in_transition(), "仪式时间走完之后恢复行动")
+	check(not game.boss.shoot_timer.is_stopped(), "仪式结束后重新开始开火节奏")
+	# 螺旋：每轮均分整圈，而且**每一轮整体转一个固定角**——单看一轮是个正多边形，
+	# 把相邻两轮叠起来才看得出"在转"。
+	game._purge_enemy_bullets()
+	_captured_directions.clear()
+	game.boss.fire_spiral()
+	check(
+		_captured_directions.size() == game.boss.spiral_arms,
+		"螺旋弹每轮发数与设定一致"
+	)
+	var spiral_angles: Array[float] = []
+	for direction in _captured_directions:
+		spiral_angles.append(rad_to_deg(direction.angle()))
+	spiral_angles.sort()
+	var gap_ok := true
+	for index in range(spiral_angles.size()):
+		var gap: float = absf(fposmod(
+			spiral_angles[(index + 1) % spiral_angles.size()] - spiral_angles[index], 360.0
+		))
+		if absf(gap - 360.0 / float(maxi(game.boss.spiral_arms, 1))) > 0.5:
+			gap_ok = false
+	check(gap_ok, "螺旋弹均分整圈（每一轮都是个正多边形）")
+	var upward_shots := 0
+	for direction in _captured_directions:
+		if direction.y < 0.0:
+			upward_shots += 1
+	check(upward_shots > 0, "螺旋弹覆盖整圈、有朝上的弹——与只朝下的扇形一眼可分")
+	# 每轮转过的角度必须恰好是设定的步长，否则要么看着像静止的多边形、要么变成乱射。
+	var first_round: Array[Vector2] = _captured_directions.duplicate()
+	_captured_directions.clear()
+	game.boss.fire_spiral()
+	check(
+		not first_round.is_empty() and not _captured_directions.is_empty()
+			and is_equal_approx(
+				rad_to_deg(first_round[0].angle_to(_captured_directions[0])),
+				game.boss.spiral_step_degrees
+			),
+		"每轮整体转过的角度等于设定步长（这就是“螺旋”的来源）"
+	)
+	# 再打几刀：阶段不会倒退，也不会重新播一次仪式。
+	game.boss.take_hit()
+	game.boss.take_hit()
+	check(
+		game.boss.phase == 2 and phase_events.size() == 1,
+		"阶段只升不降，后续挨打不会重复触发仪式"
+	)
+	game._purge_enemy_bullets()
+	await settle()
+
 	# 撞机：Boss 自己不消耗，只让玩家扣命——否则拿机身去撞就能秒掉 Boss。
 	game.lives = 3
 	game.player.invulnerability_duration = 0.05

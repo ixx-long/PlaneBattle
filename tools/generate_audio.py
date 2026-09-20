@@ -33,6 +33,7 @@ MANIFEST = (
     ('upgrade.wav', '升级：上行四音琶音'),
     ('gameover.wav', '结算：下行四音'),
     ('boss.wav', 'Boss 登场：低频抖颤锯齿下滑'),
+    ('phase.wav', 'Boss 转阶段：上行抖颤锯齿，与登场那条正好相反'),
     ('bgm.wav', '背景音乐：8 秒循环，Am–F–C–G'),
 )
 
@@ -165,6 +166,9 @@ def main() -> int:
         'upgrade.wav': arpeggio([523.25, 659.25, 783.99, 1046.50], 0.09, 'square', 0.5, 5.0),
         'gameover.wav': arpeggio([523.25, 392.00, 329.63, 261.63], 0.22, 'triangle', 0.5, 2.0),
         'boss.wav': tremolo(sweep(1.0, 165.0, 82.0, 'saw', decay=0.6), 6.5, 0.55),
+        # 转阶段：**上行**（120 → 520 Hz）+ 更快的抖颤（11 Hz）。上行是"越来越急"的
+        # 通用语汇，与 boss.wav 的下行正好构成一对：一条是"它来了"，一条是"它变招了"。
+        'phase.wav': tremolo(sweep(0.9, 120.0, 520.0, 'saw', decay=0.35), 11.0, 0.6),
         'bgm.wav': build_bgm(),
     }
     assert sorted(clips) == sorted(name for name, _ in MANIFEST)

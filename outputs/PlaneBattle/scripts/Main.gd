@@ -27,6 +27,9 @@ const SFX_HURT: AudioStream = preload("res://assets/audio/hurt.wav")
 const SFX_UPGRADE: AudioStream = preload("res://assets/audio/upgrade.wav")
 const SFX_GAMEOVER: AudioStream = preload("res://assets/audio/gameover.wav")
 const SFX_BOSS: AudioStream = preload("res://assets/audio/boss.wav")
+## Boss 转阶段（二阶段）：上行的抖颤锯齿，与登场那条**下行**的正好相反——
+## 一条说"它来了"，一条说"它急了"。
+const SFX_PHASE: AudioStream = preload("res://assets/audio/phase.wav")
 
 ## 总线名与 default_bus_layout.tres 里的一致；写错名字 Godot 会静默回落到 Master。
 const MUSIC_BUS: String = "Music"
@@ -1009,14 +1012,33 @@ func _start_boss() -> void:
 		tuning.boss_bullet_speed_cap,
 		tuning.boss_bullet_speed + float(cycle_index) * 18.0
 	)
+	# 二阶段的参数同样在 add_child 之前写好（与其它导出值同一条约定）。
+	boss.phase_two_ratio = tuning.boss_phase_two_ratio
+	boss.transition_seconds = tuning.boss_transition_seconds
+	boss.spiral_arms = int(tuning.boss_spiral_arms)
+	boss.spiral_step_degrees = tuning.boss_spiral_step_degrees
+	boss.spiral_interval = tuning.boss_spiral_interval
+	boss.spiral_bullet_speed = tuning.boss_spiral_bullet_speed
 	boss.destroyed.connect(_on_boss_destroyed)
 	boss.hp_changed.connect(_on_boss_hp_changed)
 	boss.shoot_requested.connect(_on_boss_shoot_requested)
+	# Boss 只负责"我换阶段了"，仪式（闪光 / 震屏 / 音效 / 血条换色）全在 Main 这一侧：
+	# 表现层的东西归 Main 与 HUD，Boss 脚本不碰，这与敌机爆炸是同一条约定。
+	boss.phase_changed.connect(_on_boss_phase_changed)
 	actors.add_child(boss)
 	boss.position = Vector2(get_viewport_rect().size.x * 0.5, -120.0)
 	_play_sfx(SFX_BOSS)
 	hud.show_boss(boss.hp, boss.max_hp)
+	hud.set_boss_phase(1)
 	_refresh_hud()
+
+func _on_boss_phase_changed(phase: int) -> void:
+	# **转阶段的三件事必须同时发生**：画面白一下、屏幕震一下、放一个专属音效。
+	# 少了任何一件，"换弹幕"就只是"弹幕忽然变密了"，玩家读不出"它变招了"。
+	hud.flash_phase(boss.transition_seconds if is_instance_valid(boss) else 0.5)
+	hud.set_boss_phase(phase)
+	_start_screen_shake()
+	_play_sfx(SFX_PHASE)
 
 func _on_boss_hp_changed(hp: int) -> void:
 	if is_instance_valid(boss):

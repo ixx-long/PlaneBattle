@@ -39,6 +39,9 @@ const CHOICE_ACTIONS: Array[String] = ["choice_1", "choice_2", "choice_3", "choi
 @onready var best_label: Label = $BestLabel
 @onready var xp_bar: ProgressBar = $XpBar
 @onready var damage_flash: ColorRect = $DamageFlash
+## 转阶段的全屏闪白。与受伤红闪分开两个节点：红闪的语义是"你被打了"，
+## 白闪的语义是"Boss 变招了"，同用一层会互相打断补间。
+@onready var phase_flash: ColorRect = $PhaseFlash
 @onready var boss_label: Label = $BossLabel
 @onready var boss_bar: ProgressBar = $BossBar
 @onready var message_label: Label = $MessageLabel
@@ -72,6 +75,15 @@ const CHOICE_ACTIONS: Array[String] = ["choice_1", "choice_2", "choice_3", "choi
 
 var _damage_tween: Tween
 var _pulse_tween: Tween
+var _phase_tween: Tween
+## 转阶段闪白的峰值透明度。比受伤红闪（0.26）更亮：那一下要的是"整屏一白"的仪式感，
+## 而不是"泛一层颜色"。它持续 0.5 秒，之后必须自己回到全透明。
+@export var phase_flash_alpha: float = 0.72
+## Boss 血条的显示状态。**三者一起维护**，因为文字是"阶段 + 血量"拼出来的：
+## 各写各的就会互相覆盖（截图里已经抓到过一次）。
+var _boss_phase: int = 1
+var _boss_hp: int = 0
+var _boss_max_hp: int = 1
 ## 本机是否是触屏设备。只影响提示文案，不参与任何规则判定。
 var touch_device: bool = false
 
@@ -117,18 +129,56 @@ func update_progress(current_level: int, current_xp: int, xp_to_next: int) -> vo
 
 func show_boss(hp: int, max_hp: int) -> void:
 	# 血条与标签只在这段时间出现：Boss 战期间不刷普通敌机，屏幕上方就这一条信息。
+	_boss_phase = 1
+	_refresh_boss_phase_style()
 	boss_label.show()
 	boss_bar.show()
 	update_boss(hp, max_hp)
 
 func update_boss(hp: int, max_hp: int) -> void:
-	boss_bar.max_value = maxf(1.0, float(max_hp))
-	boss_bar.value = float(maxi(hp, 0))
-	boss_label.text = "BOSS %d/%d" % [maxi(hp, 0), max_hp]
+	_boss_hp = maxi(hp, 0)
+	_boss_max_hp = maxi(max_hp, 1)
+	boss_bar.max_value = maxf(1.0, float(_boss_max_hp))
+	boss_bar.value = float(_boss_hp)
+	_refresh_boss_label()
+
+func set_boss_phase(phase: int) -> void:
+	_boss_phase = maxi(phase, 1)
+	_refresh_boss_phase_style()
+	_refresh_boss_label()
+
+func _refresh_boss_label() -> void:
+	# **阶段与血量在同一处拼**：血量每次变化都会重写这行，阶段标记如果只在切换时写一次，
+	# 下一次挨打就会被覆盖掉——截图里就是这么露馅的（标了"二阶段"，再打一刀就没了）。
+	boss_label.text = (
+		"BOSS 二阶段 %d/%d" % [_boss_hp, _boss_max_hp] if _boss_phase >= 2
+		else "BOSS %d/%d" % [_boss_hp, _boss_max_hp]
+	)
+
+func _refresh_boss_phase_style() -> void:
+	# 阶段提示同时放在文字与颜色上：**只改颜色的话，色弱玩家读不出来；
+	# 只改文字的话，正在看弹幕的人根本不会去读。** 两条一起才叫"看得见"。
+	if _boss_phase >= 2:
+		boss_label.add_theme_color_override("font_color", Color(1.0, 0.45, 0.12, 1))
+		boss_bar.modulate = Color(1.0, 0.72, 0.42, 1)
+	else:
+		boss_label.add_theme_color_override("font_color", Color(0.78, 0.16, 0.24, 1))
+		boss_bar.modulate = Color.WHITE
 
 func hide_boss() -> void:
 	boss_label.hide()
 	boss_bar.hide()
+
+func flash_phase(duration: float = 0.5) -> void:
+	# 转阶段的全屏闪白：先冲到接近全白、再在剩下的时间里淡掉。
+	# 与受伤红闪同样的写法（立刻置位 + 持引用 kill 旧补间），这样连续触发也不会打架。
+	if _phase_tween != null and _phase_tween.is_valid():
+		_phase_tween.kill()
+	phase_flash.color.a = phase_flash_alpha
+	_phase_tween = create_tween()
+	_phase_tween.tween_property(
+		phase_flash, "color:a", 0.0, maxf(duration, 0.05)
+	).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
 
 func flash_damage() -> void:
 	# 立刻把透明度抬起来再淡出：受伤反馈必须当帧可见，也让断言不必等一个帧才成立。

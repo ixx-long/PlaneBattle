@@ -16,8 +16,11 @@ func _physics_process(delta: float) -> void:
 		return
 	position += direction * speed * delta
 	# 斜射后左右也会出界，三个方向都要判，否则会留下永不销毁的弹。
+	# **顶边同样要判**：Boss 二阶段的螺旋弹幕是整圈径向的，其中一部分朝正上方飞，
+	# 不判顶边它们会一直往上飞、永远不释放（早期版本只判了下边与左右）。
 	var bounds: Vector2 = get_viewport_rect().size
-	if global_position.y > bounds.y + 48.0 or global_position.x < -48.0 or global_position.x > bounds.x + 48.0:
+	if (global_position.y > bounds.y + 48.0 or global_position.y < -48.0
+			or global_position.x < -48.0 or global_position.x > bounds.x + 48.0):
 		deactivate()
 		queue_free()
 
