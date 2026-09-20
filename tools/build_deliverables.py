@@ -300,7 +300,7 @@ with zipfile.ZipFile(archive, 'w', zipfile.ZIP_DEFLATED) as bundle:
     # 音频是二进制、无法嵌进文档，所以把生成脚本一并放进包里：
     # 收到交付物的人既能直接用现成 WAV，也能重跑出逐字节相同的文件。
     # 同理，Web 版的导出脚本也随包：第 8.6 节让读者用它导 Web 版，包里没有就成了空话。
-    for tool in ('generate_audio.py', 'fetch_export_templates.py', 'export_web.py'):
+    for tool in ('generate_audio.py', 'build_font.py', 'fetch_export_templates.py', 'export_web.py'):
         bundle.write(ROOT / 'tools' / tool, f'tools/{tool}')
 
 expected = (

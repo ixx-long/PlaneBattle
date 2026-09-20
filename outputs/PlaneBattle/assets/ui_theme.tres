@@ -1,7 +1,13 @@
-[gd_resource type="Theme" load_steps=5 format=3]
+[gd_resource type="Theme" load_steps=7 format=3]
 
-[sub_resource type="SystemFont" id="UIFont"]
+[ext_resource type="FontFile" path="res://assets/fonts/NotoSansSC-Regular.subset.ttf" id="1_uifont"]
+
+[sub_resource type="SystemFont" id="SystemFallback"]
 font_names = PackedStringArray("Microsoft YaHei", "Noto Sans CJK SC", "PingFang SC", "WenQuanYi Zen Hei")
+
+[sub_resource type="FontVariation" id="UIFont"]
+base_font = ExtResource("1_uifont")
+fallbacks = Array[Font]([SubResource("SystemFallback")])
 
 [sub_resource type="StyleBoxFlat" id="NormalButton"]
 bg_color = Color(0.79, 0.91, 0.95, 1)

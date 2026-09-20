@@ -2,7 +2,7 @@
 
 480 × 800 竖版无尽生存射击原型。Godot 4.7.2 + GDScript。
 
-**零外部美术与音频素材**——所有图形由内置多边形绘制，所有音效与背景音乐由 Python 脚本合成，仓库里没有任何一张图片或一段下载来的音源。
+**零外部美术与音频素材**——所有图形由内置多边形绘制，所有音效与背景音乐由 Python 脚本合成，仓库里没有任何一张图片或一段下载来的音源。唯一的第三方文件是 `assets/fonts/` 下那份 **SIL OFL 授权的中文字体子集**（Web 版没有系统字体可查，不留一份中文就全是方块），它同样是脚本产物：`tools/build_font.py` 从 Noto Sans SC 裁出界面真正用到的 823 个字，约 259 KB，许可证一并随包。
 
 |  |  |
 | --- | --- |
@@ -10,7 +10,7 @@
 | 分辨率 | 480 × 800，`canvas_items` 等比缩放 |
 | 物理 | 120 Hz |
 | 规模 | 10 个脚本 / 9 个场景 / 16 项能力 / 3 种战机形态 / 5 套波次编队 |
-| 验证 | **460 项自动回归断言** + 压力基准 + 威胁基准 + 浸泡基准 + 追击基准，八个模式全绿 |
+| 验证 | **475 项自动回归断言** + 压力基准 + 威胁基准 + 浸泡基准 + 追击基准，八个模式全绿 |
 | 素材 | 7 段程序合成音频，0 个第三方文件 |
 
 | 开始界面 | 战斗 |
@@ -103,7 +103,8 @@ outputs/PlaneBattle/          游戏本体，导入这个目录即可运行
 ├── project.godot             窗口、输入映射、碰撞层、120 Hz
 ├── assets/
 │   ├── audio/                7 段程序合成的 WAV（含循环背景音乐）
-│   ├── ui_theme.tres         界面主题（系统中文字体候选表）
+│   ├── fonts/                中文子集字体（SIL OFL，由 tools/build_font.py 生成）+ 许可证
+│   ├── ui_theme.tres         界面主题（随包中文字体子集 + 系统字体兜底）
 │   └── wave_tuning.tres      难度曲线与波次参数表——所有数值都在这里，不必改代码
 ├── scenes/                   9 个场景
 ├── scripts/                  10 个脚本
@@ -114,6 +115,7 @@ tools/                        构建与验证工具链
 ├── godot_log.py              引擎日志判读（区分真实错误与已登记的环境诊断）
 ├── build_deliverables.py     生成交付物：开发文档、验证报告、源码 ZIP
 ├── generate_audio.py         音频合成（固定随机种子，逐字节可复现）
+├── build_font.py             从中文字体裁出界面用字子集（Web 版不裁就没中文）
 ├── fetch_export_templates.py 下载并校验 Godot 导出模板（Web 版的前提）
 ├── export_web.py             导出 Web 版并发布到 gh-pages 分支
 └── play.ps1                  play.bat 的实现
@@ -128,7 +130,7 @@ screenshots/                  README 用的实机截图
 这套流水线是这个项目里工程含量最高的部分。所有验证都用真实的 Godot 引擎跑，不是 mock：
 
 ```bash
-python tools/validate_project.py smoke     # 460 项回归断言
+python tools/validate_project.py smoke     # 475 项回归断言
 python tools/validate_project.py visual    # 生成 9 张实机截图
 python tools/validate_project.py stress    # 压力基准：峰值对象数、帧时间 p99
 python tools/validate_project.py threat    # 威胁基准：敌方火力有多少真的到达玩家面前
@@ -175,8 +177,8 @@ python tools/validate_project.py launch    # 主场景启动
 
 诚实列出来，避免读者误判这个原型的完成度：
 
-- **没有独立可执行文件。** 导出 Windows / Web 需要先下载约 1 GB 的导出模板，本仓库不含。步骤见开发文档第 8.6 节。
-- **跨平台中文字体未经处理。** 界面用系统字体候选表（微软雅黑 / Noto Sans CJK / 苹方 / 文泉驿），Windows 与 macOS 正常；**Web 和部分精简 Linux 不保证有中文字体**，正式跨平台发行需要随包附一份有合法授权的中文 `.ttf`。
+- **没有独立可执行文件。** 导出 Windows / Web 需要先下载约 1.19 GB 的导出模板（`python tools/fetch_export_templates.py`，带官方 SHA-256 校验），本仓库不含。步骤见开发文档第 8.6 节。
+- ~~**跨平台中文字体未经处理。**~~ **已解决**：桌面版仍优先用系统字体（微软雅黑 / Noto Sans CJK / 苹方 / 文泉驿），但主题现在带一份随包的中文子集字体兜底——Web 版上"全是方块"的现象就是这么修掉的，两条回归断言守着它（默认字体必须是随包字体文件、界面用字必须全覆盖）。子集是脚本产物，见 `tools/build_font.py`。
 - **只在 Windows 上验证过。** 无头回归通过不等于已认证所有平台。
 - **难度曲线仍在按真人试玩数据调整。** 目前的调参依据是逐局记录（`user://runs.jsonl`），而不是主观感觉；玩家的强度上升速度是一个已知的待办项。
 - **引擎会打印一条 `Failed to read the root certificate store`。** 这是运行环境读取 Windows 证书库失败，本项目为纯离线原型、不发起 TLS 连接，与游戏逻辑无关。日志判读脚本按精确匹配放行它，并在日志中原样标注。
@@ -192,7 +194,7 @@ python tools/build_deliverables.py
 
 **为什么文档不在版本库里**：它逐字嵌入了所有源码，提交它意味着**每一次改源码都会产生一份与源码改动等量的 diff**；而它由 `tools/document_sections.py` 加源码在几秒内重建。同理，验证报告里含每次都会变的实测帧时间。这两样都是产物而不是源码，所以 `.gitignore` 排除了它们。
 
-`tools/` 下的脚本各司其职：`validate_project.py` 调度八种验证模式，`godot_log.py` 判读引擎日志，`generate_audio.py` 合成音频，`build_deliverables.py` 打包交付物，`fetch_export_templates.py` 与 `export_web.py` 负责 Web 版（下载模板、导出、发布）。
+`tools/` 下的脚本各司其职：`validate_project.py` 调度八种验证模式，`godot_log.py` 判读引擎日志，`generate_audio.py` 合成音频，`build_font.py` 裁中文字体子集，`build_deliverables.py` 打包交付物，`fetch_export_templates.py` 与 `export_web.py` 负责 Web 版（下载模板、导出、发布）。
 
 ## 许可
 

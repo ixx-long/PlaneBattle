@@ -491,6 +491,50 @@ func _run() -> void:
 	)
 	await clear_arena()
 
+	# --- 字体与界面用字的覆盖 ---
+	# 这两条是为一个已经发生过的真实现象加的：**Web 版上中文全变成方块**。
+	# 原因是主题只靠 SystemFont 取系统字体，而浏览器里根本没有系统字体可查。
+	# 现在的做法是随包一份 OFL 授权的中文字体子集（tools/build_font.py 从 Noto Sans SC
+	# 裁出来），SystemFont 退居 fallback。下面两条分别守住"有没有兜底字体"与
+	# "界面里会出现的字是不是都被兜住了"——子集化最典型的故障就是偶尔缺一个字，
+	# 那种问题靠肉眼极难发现，而这条断言会把缺的字直接报出来。
+	var ui_theme: Theme = load("res://assets/ui_theme.tres")
+	check(ui_theme != null and ui_theme.default_font != null, "主题设置了默认字体")
+	var bundled: Font = ui_theme.default_font
+	if bundled is FontVariation:
+		bundled = (bundled as FontVariation).base_font
+	check(
+		bundled is FontFile,
+		"默认字体带**随包的字体文件**，而不是只靠 SystemFont（只靠系统字体时 Web 上会全变方块）"
+	)
+	var visible_texts: Array[String] = [
+		game.hud.hint_label.text, game.hud.message_label.text,
+		game.hud.score_label.text, game.hud.lives_label.text, game.hud.best_label.text,
+		game.hud.status_label.text, game.hud.level_label.text,
+	]
+	for upgrade in game.UPGRADES:
+		visible_texts.append(str(upgrade["name"]))
+		visible_texts.append(str(upgrade["detail"]))
+	for ship in game.SHIPS:
+		visible_texts.append(str(ship["name"]))
+		visible_texts.append(str(ship["detail"]))
+	var uncovered := {}
+	for text in visible_texts:
+		for index in range(text.length()):
+			var code: int = text.unicode_at(index)
+			if code > 32 and not bundled.has_char(code):
+				uncovered[text.substr(index, 1)] = true
+	check(
+		uncovered.is_empty(),
+		"界面里会显示的字都在随包字体里（缺字会直接报出来，实测缺：%s）" % str(uncovered.keys())
+	)
+	# 自检：用一个确定不在子集里的生僻字确认这条断言**真的能发现缺字**，而不是恒真。
+	# 少了这一条，"界面用字全覆盖"这句结论随时可能因为 has_char 的语义变化而变成空话。
+	check(
+		not bundled.has_char(0x9F98),
+		"（对照）子集确实不包含生僻字，说明上面那条覆盖率断言不是恒真"
+	)
+
 	# --- 游隼型的追踪导弹 ---
 	# **主弹幕一律照直飞，追踪是另一路武器。** 这是被数据逼出来的结构：
 	# 若每发子弹都追踪，满配每秒 13.5 次射击会全部命中，实测把敌方弹幕打到 0；

@@ -626,7 +626,7 @@ Enemy **不连接** area_entered（Mask=0）；Player 通知其 hit_player。玩
 5. 运行导出的exe，重复人工验收。Windows Defender或SmartScreen可能警示未签名自制程序，正式分发需代码签名，不建议指导玩家全局关闭系统防护。
 6. **Web（可以做成一个能直接点开玩的链接）**：仍用 Compatibility，添加 Web preset。**必须关掉线程支持**（`variant/thread_support=false`）——带线程的 Web 导出要求服务器发 COOP/COEP 两个响应头，而 GitHub Pages、itch.io 这类静态托管都发不了，页面会一直卡在加载。导出目录里的 html/wasm/pck 要全部上传 HTTP 服务，不能 `file://` 双击打开。
 7. **把 Web 版发到 GitHub Pages**：交付的工程里已经带好了 Web preset 与两条命令——`python tools/fetch_export_templates.py`（下载并校验导出模板，Web 导出必需，约 1.19 GB）和 `python tools/export_web.py --publish`（导出 + 自检 + 提交到 `gh-pages` 分支）。推上去之后在仓库 **Settings → Pages** 把 Source 选成 `gh-pages` 分支即可，地址形如 `https://<用户名>.github.io/PlaneBattle/`。**注意 `export_presets.cfg` 的 `export_path` 与脚本里的输出目录要一致**，否则导出到一半才发现文件在别处。
-8. SystemFont 依赖设备字体。Windows 自带微软雅黑；其他桌面一般有相应候选字体。**Web或某些Linux设备不保证有中文字体**：正式跨平台发行时，加入具有合法分发许可的中文 .ttf/.otf，将 Theme 的 default_font 改为 FontFile，再重新导出。游戏原型在本机无需字体下载。
+8. **中文字体：桌面版靠系统字体，Web 版必须随包**。`assets/ui_theme.tres` 的 `default_font` 现在是**随包字体子集 + SystemFont 兜底**：子集由 `tools/build_font.py` 从 SIL OFL 授权的 **Noto Sans SC** 裁出（只保留项目里真的会显示的字，约 259 KB），SystemFont 仍带着微软雅黑 / 苹方 / Noto CJK 的候选表，负责子集之外的意外字符。**为什么不能只靠 SystemFont**：浏览器里没有系统字体可查，Web 版的中文会全部变成方块——这是真机上已经发生过一次的现象，现在由两条回归断言守着（默认字体必须是随包字体文件；界面里会出现的每一个字都必须在子集里，缺哪个就报哪个）。换成别的字体时记得同步 `tools/build_font.py` 的源与许可证，OFL 要求许可证随字体一起分发（`assets/fonts/OFL.txt`）。
 
 本交付是源码项目，不附带导出模板或发行exe，导出包需按上述步骤在你的目标平台验证。
 
@@ -741,7 +741,8 @@ Enemy **不连接** area_entered（Mask=0）；Player 通知其 hit_player。玩
 | 手机上打开页面完全玩不了 | 操作只做了键盘（WASD/空格/Shift），而作品链接很可能是在手机上被点开的 | `Player` 增加触屏：`InputEventScreenTouch/Drag` 跟手 + 按住自动开火 + 抬手停火；提示文案按 `DisplayServer.is_touchscreen_available()` 切换 |
 | 无头测试里"触摸一下"把飞机送到了右下角 | 无头模式窗口是 **0×0**，引擎的屏幕变换退化成 8%，注入的触点坐标被换算到一万像素以外 | 期望值用引擎自己的 `get_screen_transform().affine_inverse()` 反算；"跟手逻辑"另用游戏内坐标单独验。**断言里不要假设触点坐标就等于游戏内坐标** |
 | Web 版页面一直卡在加载 | 带线程的 Web 导出要求服务器发 COOP/COEP 响应头，静态托管发不了 | `variant/thread_support=false` 重新导出；这条不写进 preset 的话，在本地服务器上可能正常、一上 Pages 就废 |
-| Web 版中文显示成方块 | `SystemFont` 在 Web 上取不到系统中文字体（这是"跨平台字体"那条已知限制的具体表现） | 随包附一份有合法分发许可的中文字体（SIL OFL 之类的 Noto Sans SC），把 Theme 的 `default_font` 指过去；子集化到界面用到的字即可控制在几百 KB |
+| Web 版中文显示成方块 | 主题只靠 `SystemFont` 取系统字体，而**浏览器里没有系统字体可查**（真机上已发生一次） | 随包一份 SIL OFL 授权的中文字体子集（`tools/build_font.py` 从 Noto Sans SC 裁出 823 个字 / 259 KB），主题改成"子集 + SystemFont 兜底"；两条断言守着：默认字体必须是随包字体文件、界面用字必须全覆盖 |
+| 改完 `export_presets.cfg` 后引擎报"缺某个键" | 在预设段落里写了 `#` 注释——**Godot 的 ConfigFile 只认 `;`**，`#` 行会让解析错位，于是引擎报的是一个毫不相干的键缺失（实测报 `preset.0/key exclude_filter`） | 预设文件里不写注释；要解释就写在 `tools/export_web.py` 的文档字符串里。这条错误还会把 import/launch 的日志弄脏，让流水线失败 |
 | 选项数量与卡片数对不上 | BASE_OFFERS 与 HUD 的卡片节点数不一致 | BASE_OFFERS=4，HUD 预留 5 张卡并配 choice_1..5；要加到 5 以上需同时加节点与输入动作 |
 | 改能力文案后卡片被截断 | 固定矩形里塞了过长的文案 | 回归测试逐项断言“卡片文字宽度 ≤ 卡片宽度”，并检查第 5 张不越出面板下沿 |
 | 屏幕震动把 HUD 也带着抖 | HUD 不在 CanvasLayer 上，或误开了 follow_viewport | HUD 挂在 CanvasLayer(layer=1)，默认不跟随视口；震动只改 Camera2D.offset，不去碰任何节点位置 |

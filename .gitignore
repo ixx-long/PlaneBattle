@@ -14,6 +14,11 @@ tools/godot-4.7.2.zip
 # 而脚本自己下的是小写短名——两种都得挡住。
 tools/*.tpz
 
+# --- 字体工具链的缓存（约 17 MB 的 Noto Sans SC 变量字体）---
+# 它是 tools/build_font.py 的**输入**，不是源码：随包交付的是裁出来的子集
+# （assets/fonts/*.subset.ttf，几百 KB）。要重建子集时脚本会自己下载。
+tools/fonts/
+
 # --- Web 导出的产物（gh-pages 分支的内容）---
 # 它是产物：一条命令（tools/export_web.py）就能重建，而且体积不小（wasm 约 38 MB）。
 # 页面本身发布在 gh-pages 分支上，主干只保留导出脚本与配置。

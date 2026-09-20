@@ -7,6 +7,17 @@
     3. 导出用的 `APPDATA` 指到工程内的隔离目录，引擎状态（编辑器设置、着色器缓存、
        导出模板）都落在这里，不污染真实用户目录，也不需要额外权限。
 
+**`export_presets.cfg` 里不要写 `#` 注释**：Godot 的 ConfigFile 只认 `;`，一行的 `#`
+会让解析错位，引擎随后报的是一个看起来毫不相干的错——实测报的是
+`Couldn't find the given section "preset.0" and key "exclude_filter", and no default was given`，
+顺着"缺 exclude_filter"去查会一路查到错的方向。这条 ERROR 会把 import/launch 的日志弄脏，
+让流水线失败（`godot_log.py` 只放行证书那一条环境诊断）。
+
+Web 版的四个产物里没有字体——中文能不能显示，取决于工程里有没有随包的中文字体：
+`assets/ui_theme.tres` 的默认字体是"随包子集 + SystemFont fallback"，子集由
+`tools/build_font.py` 从 OFL 授权的 Noto Sans SC 裁出。浏览器里没有系统字体可查，
+只靠 SystemFont 会让界面上的中文全变成方块（真机上已经发生过一次）。
+
 用法：
     python tools/export_web.py                 # 导出并自检
     python tools/export_web.py --publish       # 导出后推到 gh-pages 分支
